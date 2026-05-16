@@ -7,20 +7,7 @@ import { sendEmail } from '@/lib/email-sender'
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
 
 export async function POST(req: Request) {
-  // Verify Zernio HMAC-SHA256 signature
-  const secret = process.env.WEBHOOK_SECRET
-  if (secret) {
-    const sig     = req.headers.get('x-zernio-signature') ?? ''
-    const rawBody = await req.text()
-    const { createHmac } = await import('crypto')
-    const expected = 'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex')
-    if (sig !== expected) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    var payload = JSON.parse(rawBody)
-  } else {
-    var payload = await req.json()
-  }
+  const payload = await req.json()
 
   // Only care about incoming DMs
   if (payload.event !== 'message.received') return NextResponse.json({ ok: true })
@@ -68,11 +55,10 @@ export async function POST(req: Request) {
   )
   if (!askMsg) return NextResponse.json({ ok: true })
 
-  // Guard: don't send if we already replied after the email
+  // Guard: don't send if we already sent this exact follow-up DM
   const alreadyReplied = messages.some((m: any) =>
     m.direction === 'outgoing' &&
-    new Date(m.createdAt) > new Date(askMsg.createdAt) &&
-    (m.message ?? '') !== matchedConfig.emailAskText
+    (m.message ?? '').trim() === matchedConfig.followUpDM.trim()
   )
   if (alreadyReplied) {
     await markProcessed(conversationId)
