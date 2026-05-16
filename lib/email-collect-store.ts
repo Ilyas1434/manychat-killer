@@ -1,107 +1,134 @@
 /**
  * Per-automation email-collect configs.
- * Storage tiers: Vercel KV → env var (read-only) → local file
+ *
+ * Storage tiers (auto-detected):
+ *  1. Vercel KV        — KV_REST_API_URL set
+ *  2. GitHub Gist      — GITHUB_GIST_TOKEN + CONFIG_GIST_ID set (production default)
+ *  3. Local file       — dev fallback
+ *
+ * The Gist tier reads/writes at runtime with no redeploy needed.
  */
 
 export type EmailCollectConfig = {
-  automationId:   string   // Zernio automation ID — one config per automation
-  automationName: string   // display label
-  emailAskText:   string   // must match the automation's dmMessage exactly
-  followUpDM:     string   // what to send after they give their email
+  automationId:   string
+  automationName: string
+  emailAskText:   string
+  followUpDM:     string
   emailSubject:   string
   updatedAt:      string
 }
 
-type Store = {
-  configs:                EmailCollectConfig[]
-  processedConversations: string[]
-}
-
-const KV_KEY = 'email-collect-store'
-
-async function kvRead(): Promise<Store> {
+/* ── Tier 1: Vercel KV ──────────────────────────────────── */
+async function kvGet(): Promise<EmailCollectConfig[]> {
   const { kv } = await import('@vercel/kv')
-  return (await kv.get<Store>(KV_KEY)) ?? { configs: [], processedConversations: [] }
+  return (await kv.get<EmailCollectConfig[]>('ec-configs')) ?? []
 }
-async function kvWrite(s: Store) {
+async function kvSet(configs: EmailCollectConfig[]) {
   const { kv } = await import('@vercel/kv')
-  await kv.set(KV_KEY, s)
+  await kv.set('ec-configs', configs)
 }
 
-function envRead(): Store {
-  try {
-    const configs = JSON.parse(process.env.EMAIL_COLLECT_CONFIGS ?? '[]') as EmailCollectConfig[]
-    return { configs, processedConversations: [] }
-  } catch { return { configs: [], processedConversations: [] } }
+/* ── Tier 2: GitHub Gist (runtime R/W, no redeploy) ────── */
+const GIST_FILE = 'email-collect.json'
+
+async function gistGet(): Promise<EmailCollectConfig[]> {
+  const res = await fetch(`https://api.github.com/gists/${process.env.CONFIG_GIST_ID}`, {
+    headers: {
+      Authorization: `Bearer ${process.env.GITHUB_GIST_TOKEN}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    cache: 'no-store',
+  })
+  if (!res.ok) return []
+  const data = await res.json()
+  try { return JSON.parse(data.files[GIST_FILE]?.content ?? '[]') }
+  catch { return [] }
 }
 
-async function fileRead(): Promise<Store> {
+async function gistSet(configs: EmailCollectConfig[]) {
+  await fetch(`https://api.github.com/gists/${process.env.CONFIG_GIST_ID}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${process.env.GITHUB_GIST_TOKEN}`,
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    body: JSON.stringify({
+      files: { [GIST_FILE]: { content: JSON.stringify(configs, null, 2) } },
+    }),
+  })
+}
+
+/* ── Tier 3: Local file ─────────────────────────────────── */
+async function fileGet(): Promise<EmailCollectConfig[]> {
   const fs   = (await import('fs')).default
   const path = (await import('path')).default
   try { return JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'email-collect.json'), 'utf8')) }
-  catch { return { configs: [], processedConversations: [] } }
+  catch { return [] }
 }
-async function fileWrite(s: Store) {
+async function fileSet(configs: EmailCollectConfig[]) {
   const fs   = (await import('fs')).default
   const path = (await import('path')).default
   const file = path.join(process.cwd(), 'data', 'email-collect.json')
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify(s, null, 2))
+  fs.writeFileSync(file, JSON.stringify(configs, null, 2))
 }
 
-const useKV  = () => !!process.env.KV_REST_API_URL
-const useEnv = () => !useKV() && !!process.env.VERCEL
+/* ── Adapter ────────────────────────────────────────────── */
+const tier = () =>
+  process.env.KV_REST_API_URL                                         ? 'kv'   :
+  process.env.GITHUB_GIST_TOKEN && process.env.CONFIG_GIST_ID        ? 'gist' :
+                                                                        'file'
 
-async function read(): Promise<Store> {
-  if (useKV())  return kvRead()
-  if (useEnv()) return envRead()
-  return fileRead()
+async function getAll(): Promise<EmailCollectConfig[]> {
+  switch (tier()) {
+    case 'kv':   return kvGet()
+    case 'gist': return gistGet()
+    default:     return fileGet()
+  }
 }
-async function write(s: Store) {
-  if (useKV())  return kvWrite(s)
-  if (useEnv()) return   // read-only; user must set up Vercel KV
-  return fileWrite(s)
+async function setAll(configs: EmailCollectConfig[]) {
+  switch (tier()) {
+    case 'kv':   return kvSet(configs)
+    case 'gist': return gistSet(configs)
+    default:     return fileSet(configs)
+  }
 }
 
-/* ── Public API ── */
+/* ── Public API ─────────────────────────────────────────── */
 export async function getConfigs(): Promise<EmailCollectConfig[]> {
-  return (await read()).configs
+  return getAll()
 }
 
 export async function upsertConfig(config: EmailCollectConfig) {
-  const store = await read()
-  const idx   = store.configs.findIndex(c => c.automationId === config.automationId)
-  if (idx >= 0) store.configs[idx] = config
-  else          store.configs.push(config)
-  await write(store)
+  const all = await getAll()
+  const idx = all.findIndex(c => c.automationId === config.automationId)
+  if (idx >= 0) all[idx] = config
+  else all.push(config)
+  await setAll(all)
 }
 
 export async function deleteConfig(automationId: string) {
-  const store = await read()
-  store.configs = store.configs.filter(c => c.automationId !== automationId)
-  await write(store)
+  const all = await getAll()
+  await setAll(all.filter(c => c.automationId !== automationId))
 }
 
 export async function getConfigForConversation(outgoingMessages: string[]): Promise<EmailCollectConfig | null> {
-  const configs = await getConfigs()
+  const all = await getAll()
   for (const msg of outgoingMessages) {
-    const match = configs.find(c => msg.trim().startsWith(c.emailAskText.trim().slice(0, 60)))
+    const match = all.find(c => msg.trim().startsWith(c.emailAskText.trim().slice(0, 60)))
     if (match) return match
   }
   return null
 }
 
-export async function isProcessed(conversationId: string): Promise<boolean> {
-  if (useEnv()) return false
-  return (await read()).processedConversations.includes(conversationId)
+// Processed conversations — stateless on Gist/env tier (webhook uses conversation history check)
+const _processed = new Set<string>()
+export async function isProcessed(id: string): Promise<boolean> {
+  return tier() === 'file' ? _processed.has(id) : false
 }
-export async function markProcessed(conversationId: string) {
-  if (useEnv()) return
-  const store = await read()
-  if (!store.processedConversations.includes(conversationId)) {
-    store.processedConversations.push(conversationId)
-    await write(store)
-  }
+export async function markProcessed(id: string) {
+  _processed.add(id)
 }
 
-export const storageMode = () => useKV() ? 'kv' : useEnv() ? 'env' : 'file'
+export const storageMode = () => tier()
