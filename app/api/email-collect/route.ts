@@ -1,25 +1,20 @@
 import { NextResponse } from 'next/server'
-import { getConfigs, addConfig, type EmailCollectConfig } from '@/lib/email-collect-store'
-import { randomUUID } from 'crypto'
+import { getConfigs, upsertConfig, storageMode, type EmailCollectConfig } from '@/lib/email-collect-store'
 
 export async function GET() {
-  const configs  = await getConfigs()
-  const usingEnv = !process.env.KV_REST_API_URL && !!process.env.VERCEL
-  return NextResponse.json({ configs, usingEnv })
+  const configs = await getConfigs()
+  return NextResponse.json({ configs, storageMode: storageMode() })
 }
 
 export async function POST(req: Request) {
-  const { emailAskText, followUpDM, emailSubject } = await req.json()
-  if (!emailAskText?.trim()) {
-    return NextResponse.json({ error: 'emailAskText required' }, { status: 400 })
+  const body: EmailCollectConfig = await req.json()
+  if (!body.automationId || !body.followUpDM?.trim()) {
+    return NextResponse.json({ error: 'automationId and followUpDM required' }, { status: 400 })
   }
   const config: EmailCollectConfig = {
-    id:           randomUUID(),
-    emailAskText: emailAskText.trim(),
-    followUpDM:   followUpDM?.trim()    ?? '',
-    emailSubject: emailSubject?.trim()  ?? "Here's what you asked for!",
-    createdAt:    new Date().toISOString(),
+    ...body,
+    updatedAt: new Date().toISOString(),
   }
-  await addConfig(config)
+  await upsertConfig(config)
   return NextResponse.json({ config })
 }

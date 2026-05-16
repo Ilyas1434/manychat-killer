@@ -2,206 +2,207 @@
 
 import { useState, useEffect, useCallback } from 'react'
 
+type Automation = {
+  id?: string; name?: string; dmMessage?: string; isActive?: boolean
+  stats?: { triggered?: number }
+}
 type Config = {
-  id: string
-  emailAskText: string
-  followUpDM:   string
-  emailSubject: string
-  createdAt:    string
+  automationId: string; automationName: string; emailAskText: string
+  followUpDM: string; emailSubject: string; updatedAt: string
 }
 
-const BLANK = { emailAskText: '', followUpDM: '', emailSubject: "Here's what you asked for!" }
-
-function ConfigCard({ config, onDelete }: { config: Config; onDelete: () => void }) {
-  const [deleting, setDeleting] = useState(false)
-  const del = async () => {
-    setDeleting(true)
-    await fetch(`/api/email-collect/${config.id}`, { method: 'DELETE' })
-    onDelete()
-  }
-  return (
-    <div className="bg-surface border border-border rounded-2xl p-5 group">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green" />
-          <span className="text-xs font-mono text-note uppercase tracking-widest">Active Config</span>
-        </div>
-        <button
-          onClick={del}
-          disabled={deleting}
-          className="opacity-0 group-hover:opacity-100 text-xs text-note hover:text-danger transition-all font-medium disabled:opacity-40"
-        >
-          {deleting ? '…' : 'Delete'}
-        </button>
-      </div>
-
-      <div className="space-y-3">
-        <div>
-          <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-1">Auto-sent DM (asks for email)</div>
-          <div className="text-sm text-ink bg-raised rounded-xl px-4 py-3 leading-relaxed">
-            {config.emailAskText}
-          </div>
-        </div>
-        <div>
-          <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-1">Follow-up DM (sent when they reply with email)</div>
-          <div className="text-sm text-ink bg-raised rounded-xl px-4 py-3 leading-relaxed">
-            {config.followUpDM}
-          </div>
-        </div>
-        <div>
-          <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-1">Email Subject</div>
-          <div className="text-sm text-prose bg-raised rounded-xl px-4 py-2.5">
-            {config.emailSubject}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function AddForm({ onAdd }: { onAdd: (c: Config) => void }) {
-  const [open,   setOpen]   = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [form,   setForm]   = useState(BLANK)
-  const upd = (k: keyof typeof BLANK, v: string) => setForm(f => ({ ...f, [k]: v }))
+function AutomationRow({
+  automation, config, onSave, onDelete,
+}: {
+  automation: Automation
+  config:     Config | undefined
+  onSave:     (c: Config) => void
+  onDelete:   (id: string) => void
+}) {
+  const [open,    setOpen]    = useState(false)
+  const [saving,  setSaving]  = useState(false)
+  const [deleting,setDeleting]= useState(false)
+  const [followUp,setFollowUp]= useState(config?.followUpDM     ?? '')
+  const [subject, setSubject] = useState(config?.emailSubject   ?? "Here's what you asked for!")
 
   const save = async () => {
-    if (!form.emailAskText.trim() || !form.followUpDM.trim()) return
     setSaving(true)
+    const body: Config = {
+      automationId:   automation.id!,
+      automationName: automation.name!,
+      emailAskText:   automation.dmMessage ?? '',
+      followUpDM:     followUp,
+      emailSubject:   subject,
+      updatedAt:      new Date().toISOString(),
+    }
     const res = await fetch('/api/email-collect', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(form),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     })
     const d = await res.json()
     setSaving(false)
-    if (d.config) { onAdd(d.config); setForm(BLANK); setOpen(false) }
+    if (d.config) { onSave(d.config); setOpen(false) }
   }
 
-  if (!open) return (
-    <button
-      onClick={() => setOpen(true)}
-      className="w-full flex items-center justify-center gap-2 border border-dashed border-border rounded-2xl py-4 text-sm text-note hover:border-green/40 hover:text-green/70 transition-all font-medium"
-    >
-      + Add Email-Collect Config
-    </button>
-  )
+  const del = async () => {
+    setDeleting(true)
+    await fetch(`/api/email-collect/${automation.id}`, { method: 'DELETE' })
+    onDelete(automation.id!)
+    setDeleting(false)
+  }
+
+  const hasConfig = !!config
 
   return (
-    <div className="bg-surface border border-green/30 rounded-2xl p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-ink">New Config</span>
-        <button onClick={() => setOpen(false)} className="text-note hover:text-ink text-sm transition-colors">✕</button>
+    <div className={`bg-surface border rounded-2xl overflow-hidden transition-all ${open ? 'border-green/40' : 'border-border hover:border-border-hi'}`}>
+      {/* Row */}
+      <div className="flex items-center gap-4 px-5 py-4">
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${automation.isActive ? 'bg-green' : 'bg-note'}`} />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-ink truncate">{automation.name}</div>
+          <div className="font-mono text-xs text-note mt-0.5 truncate">{automation.dmMessage?.slice(0, 70)}…</div>
+        </div>
+
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {hasConfig ? (
+            <span className="font-mono text-[10px] bg-green-lo text-green px-2.5 py-1 rounded-lg">EMAIL COLLECT ON</span>
+          ) : (
+            <span className="font-mono text-[10px] bg-raised text-note px-2.5 py-1 rounded-lg">OFF</span>
+          )}
+
+          {hasConfig && (
+            <button
+              onClick={del}
+              disabled={deleting}
+              className="text-xs text-note hover:text-danger transition-colors font-medium disabled:opacity-40"
+            >
+              {deleting ? '…' : 'Remove'}
+            </button>
+          )}
+
+          <button
+            onClick={() => setOpen(o => !o)}
+            className="text-xs text-prose hover:text-ink px-3 py-1.5 rounded-lg border border-border hover:border-border-hi transition-all font-medium"
+          >
+            {open ? 'Close' : hasConfig ? 'Edit' : 'Set Up'}
+          </button>
+        </div>
       </div>
 
-      <div>
-        <label className="font-mono text-[10px] text-note uppercase tracking-widest block mb-2">
-          Auto-sent DM — asks for their email
-        </label>
-        <textarea
-          value={form.emailAskText}
-          onChange={e => upd('emailAskText', e.target.value)}
-          rows={3}
-          placeholder={"Hey! 👋 What's your email? I'll send everything straight to your inbox 📧"}
-          className="w-full bg-raised border border-border rounded-xl px-4 py-3 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
-        />
-      </div>
+      {/* Expand */}
+      {open && (
+        <div className="border-t border-border px-5 py-5 space-y-5 step-in">
+          {/* Read-only: email ask */}
+          <div>
+            <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-2">
+              Auto-sent DM (asks for email) — pulled from your automation
+            </div>
+            <div className="bg-raised rounded-xl px-4 py-3 text-sm text-prose leading-relaxed opacity-70 select-none">
+              {automation.dmMessage}
+            </div>
+          </div>
 
-      <div>
-        <label className="font-mono text-[10px] text-note uppercase tracking-widest block mb-2">
-          Follow-up DM — sent automatically when they reply with their email
-        </label>
-        <textarea
-          value={form.followUpDM}
-          onChange={e => upd('followUpDM', e.target.value)}
-          rows={4}
-          placeholder={"Here you go, as promised: https://..."}
-          className="w-full bg-raised border border-border rounded-xl px-4 py-3 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
-        />
-      </div>
+          {/* Editable: follow-up DM */}
+          <div>
+            <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-2">
+              Follow-up DM — sent automatically when they reply with their email
+            </div>
+            <textarea
+              value={followUp}
+              onChange={e => setFollowUp(e.target.value)}
+              rows={4}
+              placeholder="Here you go, as promised: https://..."
+              className="w-full bg-raised border border-border rounded-xl px-4 py-3 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
+            />
+          </div>
 
-      <div>
-        <label className="font-mono text-[10px] text-note uppercase tracking-widest block mb-2">
-          Email Subject Line
-        </label>
-        <input
-          value={form.emailSubject}
-          onChange={e => upd('emailSubject', e.target.value)}
-          placeholder="Here's what you asked for!"
-          className="w-full bg-raised border border-border rounded-xl px-4 py-2.5 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 transition-colors"
-        />
-      </div>
+          {/* Editable: email subject */}
+          <div>
+            <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-2">
+              Email Subject Line
+            </div>
+            <input
+              value={subject}
+              onChange={e => setSubject(e.target.value)}
+              placeholder="Here's what you asked for!"
+              className="w-full bg-raised border border-border rounded-xl px-4 py-2.5 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 transition-colors"
+            />
+          </div>
 
-      <button
-        onClick={save}
-        disabled={saving || !form.emailAskText.trim() || !form.followUpDM.trim()}
-        className="w-full bg-green hover:bg-[#16a34a] disabled:opacity-40 text-bg font-semibold text-sm py-3 rounded-xl transition-colors"
-      >
-        {saving ? 'Saving…' : 'Save Config'}
-      </button>
-
-      <p className="font-mono text-[10px] text-note text-center">
-        Config saves to your storage. Set up Vercel KV in your Vercel dashboard → Storage to persist across deployments.
-      </p>
+          <button
+            onClick={save}
+            disabled={saving || !followUp.trim()}
+            className="w-full bg-green hover:bg-[#16a34a] disabled:opacity-40 text-bg font-semibold text-sm py-3 rounded-xl transition-colors"
+          >
+            {saving ? 'Saving…' : hasConfig ? 'Save Changes' : 'Enable Email Collect'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
 export default function Settings() {
-  const [configs,  setConfigs]  = useState<Config[]>([])
-  const [loading,  setLoading]  = useState(true)
-  const [usingEnv, setUsingEnv] = useState(false)
+  const [automations, setAutomations] = useState<Automation[]>([])
+  const [configs,     setConfigs]     = useState<Config[]>([])
+  const [mode,        setMode]        = useState('')
+  const [loading,     setLoading]     = useState(true)
 
-  const load = useCallback(() => {
-    fetch('/api/email-collect')
-      .then(r => r.json())
-      .then(d => {
-        setConfigs(d.configs ?? [])
-        setUsingEnv(d.usingEnv ?? false)
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+  const load = useCallback(async () => {
+    const [aRes, cRes] = await Promise.all([
+      fetch('/api/automations'),
+      fetch('/api/email-collect'),
+    ])
+    const [aData, cData] = await Promise.all([aRes.json(), cRes.json()])
+    setAutomations(aData.automations ?? [])
+    setConfigs(cData.configs ?? [])
+    setMode(cData.storageMode ?? '')
+    setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
+  const configFor = (id?: string) => configs.find(c => c.automationId === id)
+
   return (
-    <div className="p-10 max-w-2xl">
+    <div className="p-10 max-w-3xl">
       <div className="mb-10">
         <div className="font-mono text-[10px] tracking-[0.25em] text-note mb-2 uppercase">Settings</div>
         <h1 className="text-3xl font-semibold text-ink tracking-tight">Email Collect</h1>
         <p className="text-sm text-prose mt-2">
-          When someone replies to your email-ask DM with their email address, the follow-up DM below fires automatically.
+          Pick any automation and set what to DM people after they reply with their email. Each automation can send something different.
         </p>
       </div>
 
-      {usingEnv && (
-        <div className="bg-raised border border-amber/30 rounded-2xl px-5 py-4 mb-6 flex items-start gap-3">
+      {mode === 'env' && (
+        <div className="bg-raised border border-amber/30 rounded-2xl px-5 py-4 mb-8 flex items-start gap-3">
           <div className="w-1.5 h-1.5 rounded-full bg-amber mt-1.5 flex-shrink-0" />
           <div>
-            <div className="text-sm font-medium text-ink mb-0.5">Using env var config</div>
+            <div className="text-sm font-semibold text-ink mb-1">Changes won't persist after redeployment</div>
             <p className="text-xs text-prose leading-relaxed">
-              Your configs are loaded from <span className="font-mono text-amber">EMAIL_COLLECT_CONFIGS</span> in Vercel.
-              New configs added here won't persist until you connect Vercel KV (Vercel dashboard → Storage → Create KV → link to project).
+              Connect Vercel KV to make configs permanent: Vercel dashboard → your project → Storage → Create KV → Connect to Project → Redeploy. One-time setup.
             </p>
           </div>
         </div>
       )}
 
       {loading ? (
-        <div className="space-y-4">
-          {[1,2].map(i => <div key={i} className="h-48 bg-surface border border-border rounded-2xl animate-pulse" />)}
+        <div className="space-y-3">
+          {[1,2,3].map(i => <div key={i} className="h-20 bg-surface border border-border rounded-2xl animate-pulse" />)}
         </div>
       ) : (
-        <div className="space-y-4">
-          {configs.map(c => (
-            <ConfigCard
-              key={c.id}
-              config={c}
-              onDelete={() => setConfigs(cs => cs.filter(x => x.id !== c.id))}
+        <div className="space-y-3">
+          {automations.map(a => (
+            <AutomationRow
+              key={a.id}
+              automation={a}
+              config={configFor(a.id)}
+              onSave={c => setConfigs(cs => {
+                const idx = cs.findIndex(x => x.automationId === c.automationId)
+                return idx >= 0 ? cs.map((x,i) => i === idx ? c : x) : [...cs, c]
+              })}
+              onDelete={id => setConfigs(cs => cs.filter(c => c.automationId !== id))}
             />
           ))}
-          <AddForm onAdd={c => setConfigs(cs => [...cs, c])} />
         </div>
       )}
     </div>

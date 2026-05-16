@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server'
 import { getZernio, ACCOUNT_ID } from '@/lib/zernio'
-import { getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-store'
+import { getConfigForConversation, getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-store'
 import { sendEmail } from '@/lib/email-sender'
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
@@ -50,19 +50,17 @@ export async function POST(req: Request) {
     (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   )
 
-  // Match to an email-collect config
-  const matchedConfig = configs.find(cfg =>
-    messages.some((m: any) =>
-      m.direction === 'outgoing' &&
-      (m.message ?? '').trim().startsWith(cfg.emailAskText.trim().slice(0, 50))
-    )
-  )
+  // Match to the correct per-automation config
+  const outgoingTexts = messages
+    .filter((m: any) => m.direction === 'outgoing')
+    .map((m: any) => m.message ?? '')
+  const matchedConfig = await getConfigForConversation(outgoingTexts)
   if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true })
 
   // Make sure our email-ask came before their email reply
   const askMsg = messages.find((m: any) =>
     m.direction === 'outgoing' &&
-    (m.message ?? '').trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 50))
+    (m.message ?? '').trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 60))
   )
   if (!askMsg) return NextResponse.json({ ok: true })
 

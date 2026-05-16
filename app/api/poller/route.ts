@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server'
 import { getZernio, ACCOUNT_ID } from '@/lib/zernio'
-import { getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-store'
+import { getConfigForConversation, isProcessed, markProcessed, getConfigs } from '@/lib/email-collect-store'
 import { sendEmail } from '@/lib/email-sender'
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
@@ -16,9 +16,7 @@ export async function GET(req: Request) {
   }
 
   const configs = await getConfigs()
-  if (configs.length === 0) {
-    return NextResponse.json({ message: 'No email-collect automations configured.', sent: [] })
-  }
+  if (configs.length === 0) return NextResponse.json({ message: 'No email-collect configs.', sent: [] })
 
   const z       = getZernio()
   const results: { conversationId: string; participantName: string; emailFound: string; dmSent: boolean; emailSent?: boolean; error?: string }[] = []
@@ -52,19 +50,14 @@ export async function GET(req: Request) {
     )
     if (messages.length === 0) continue
 
-    // Find a config whose email-ask was sent in this conversation
-    const matchedConfig = configs.find(cfg =>
-      messages.some((m: any) =>
-        m.direction === 'outgoing' &&
-        (m.message ?? '').trim().startsWith(cfg.emailAskText.trim().slice(0, 50))
-      )
-    )
+    // Match to the correct per-automation config
+    const outgoingTexts = messages.filter((m: any) => m.direction === 'outgoing').map((m: any) => m.message ?? '')
+    const matchedConfig = await getConfigForConversation(outgoingTexts)
     if (!matchedConfig) continue
 
-    // Find the email-ask message
     const askMsg = messages.find((m: any) =>
       m.direction === 'outgoing' &&
-      (m.message ?? '').trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 50))
+      (m.message ?? '').trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 60))
     )
     if (!askMsg) continue
 
