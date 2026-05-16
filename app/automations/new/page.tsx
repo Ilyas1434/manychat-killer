@@ -11,7 +11,7 @@ type Reel = {
 type State = {
   reel: Reel | null; triggerType: 'keyword' | 'any'
   keywords: string[]; matchMode: 'contains' | 'exact'
-  collectEmail: boolean; emailAsk: string
+  collectEmail: boolean; emailAsk: string; emailSubject: string
   dmMessage: string; commentReply: string; name: string
 }
 
@@ -54,6 +54,7 @@ export default function NewAutomation() {
     reel: null, triggerType: 'keyword', keywords: [],
     matchMode: 'contains', collectEmail: false,
     emailAsk: "Hey! 👋 What's your email? I'll send everything straight to your inbox 📧",
+    emailSubject: "Here's what you asked for!",
     dmMessage: '', commentReply: '', name: '',
   })
   const set = (p: Partial<State>) => set_(s => ({ ...s, ...p }))
@@ -110,6 +111,7 @@ export default function NewAutomation() {
         body: JSON.stringify({
           emailAskText: state.emailAsk,
           followUpDM:   state.dmMessage,
+          emailSubject: state.emailSubject,
         }),
       })
     }
@@ -309,6 +311,20 @@ export default function NewAutomation() {
                   rows={3}
                   maxLength={1000}
                   className="w-full bg-surface border border-border rounded-2xl px-5 py-4 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
+                />
+              </div>
+
+              {/* Email subject */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-5 h-5 rounded-full bg-green flex items-center justify-center font-mono text-[10px] font-bold text-bg flex-shrink-0">@</div>
+                  <label className="font-mono text-xs text-note uppercase tracking-widest">Email Subject Line</label>
+                </div>
+                <input
+                  value={state.emailSubject}
+                  onChange={e => set({ emailSubject: e.target.value })}
+                  placeholder="Here's what you asked for!"
+                  className="w-full bg-surface border border-border rounded-xl px-4 py-2.5 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 transition-colors"
                 />
               </div>
 

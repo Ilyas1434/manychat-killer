@@ -8,6 +8,7 @@ export type EmailCollectConfig = {
   id:           string
   emailAskText: string
   followUpDM:   string
+  emailSubject: string   // subject line for the Brevo email
   createdAt:    string
 }
 

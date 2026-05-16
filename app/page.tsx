@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 
-type PollerResult = { conversationId: string; participantName: string; emailFound: string; dmSent: boolean; error?: string }
+type PollerResult = { conversationId: string; participantName: string; emailFound: string; dmSent: boolean; emailSent?: boolean; error?: string }
 type PollerStatus = { state: 'idle' | 'running' | 'done' | 'error'; sent: number; checked: number; results: PollerResult[]; lastRun?: string }
 
 function EmailPoller() {
@@ -77,7 +77,10 @@ function EmailPoller() {
               <span className="text-ink font-medium">{r.participantName}</span>
               <span className="text-note">replied with</span>
               <span className="font-mono text-prose text-xs">{r.emailFound}</span>
-              <span className="ml-auto text-green text-xs font-mono">DM SENT ✓</span>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-green text-xs font-mono">DM ✓</span>
+                {r.emailSent && <span className="text-blue text-xs font-mono">EMAIL ✓</span>}
+              </div>
             </div>
           ))}
         </div>

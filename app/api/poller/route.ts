@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server'
 import { getZernio, ACCOUNT_ID } from '@/lib/zernio'
 import { getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-store'
+import { sendEmail } from '@/lib/email-sender'
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
 
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
   }
 
   const z       = getZernio()
-  const results: { conversationId: string; participantName: string; emailFound: string; dmSent: boolean; error?: string }[] = []
+  const results: { conversationId: string; participantName: string; emailFound: string; dmSent: boolean; emailSent?: boolean; error?: string }[] = []
 
   // Pull conversations updated in last 72h
   const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
@@ -92,12 +93,27 @@ export async function GET(req: Request) {
     }
 
     try {
+      // 1. Send follow-up DM via Instagram
       await z.messages.sendInboxMessage({
         path: { conversationId: conv.id } as any,
         body: { accountId: ACCOUNT_ID, message: followUpDM },
       })
+
+      // 2. Send email via Brevo (fires & forgets — DM already sent even if email fails)
+      let emailSent = false
+      try {
+        await sendEmail({
+          to:      emailFound,
+          subject: matchedConfig.emailSubject || "Here's what you asked for!",
+          body:    followUpDM,
+        })
+        emailSent = true
+      } catch (emailErr: any) {
+        console.error('[poller] Email send failed:', emailErr.message)
+      }
+
       await markProcessed(conv.id)
-      results.push({ conversationId: conv.id, participantName: conv.participantName, emailFound, dmSent: true })
+      results.push({ conversationId: conv.id, participantName: conv.participantName, emailFound, dmSent: true, emailSent })
     } catch (err: any) {
       results.push({ conversationId: conv.id, participantName: conv.participantName, emailFound, dmSent: false, error: err.message })
     }

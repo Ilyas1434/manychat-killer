@@ -8,14 +8,15 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const { emailAskText, followUpDM } = await req.json()
+  const { emailAskText, followUpDM, emailSubject } = await req.json()
   if (!emailAskText?.trim()) {
     return NextResponse.json({ error: 'emailAskText required' }, { status: 400 })
   }
   const config: EmailCollectConfig = {
     id:           randomUUID(),
     emailAskText: emailAskText.trim(),
-    followUpDM:   followUpDM?.trim() ?? '',
+    followUpDM:   followUpDM?.trim()    ?? '',
+    emailSubject: emailSubject?.trim()  ?? "Here's what you asked for!",
     createdAt:    new Date().toISOString(),
   }
   await addConfig(config)
