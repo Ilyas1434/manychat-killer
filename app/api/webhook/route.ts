@@ -17,7 +17,8 @@ export async function POST(req: Request) {
   if (payload.message?.direction !== 'incoming') return NextResponse.json({ ok: true })
 
   const text           = payload.message?.text ?? ''
-  const conversationId = payload.message?.conversationId
+  // Zernio webhook sends an internal conversationId — the inbox API uses platformConversationId
+  const conversationId = payload.conversation?.platformConversationId ?? payload.message?.conversationId
   const senderName     = payload.message?.sender?.name ?? 'unknown'
 
   L(`convId=${conversationId} text="${text.slice(0,40)}"`)
