@@ -332,7 +332,7 @@ export default function NewAutomation() {
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-5 h-5 rounded-full bg-raised border border-border flex items-center justify-center font-mono text-[10px] text-note flex-shrink-0">2</div>
-                  <label className="font-mono text-xs text-note uppercase tracking-widest">Your Content DM — send manually after they reply</label>
+                  <label className="font-mono text-xs text-note uppercase tracking-widest">Your Content DM — auto-sent when they reply with their email</label>
                 </div>
                 <textarea
                   value={state.dmMessage}
@@ -372,9 +372,9 @@ export default function NewAutomation() {
                     </div>
                   </div>
                   <div className="flex gap-3 items-start">
-                    <div className="w-7 h-7 rounded-full bg-raised border border-border flex items-center justify-center text-note text-xs flex-shrink-0">👤</div>
+                    <div className="w-7 h-7 rounded-full bg-green-lo border border-green/30 flex items-center justify-center text-green text-xs flex-shrink-0">◆</div>
                     <div>
-                      <div className="font-mono text-[10px] text-note mb-1">YOU · MANUAL FOLLOW-UP</div>
+                      <div className="font-mono text-[10px] text-note mb-1">BOT · AUTO-SENT BY POLLER</div>
                       <div className="bg-raised border border-border border-dashed rounded-2xl rounded-tl-none px-4 py-3 text-sm text-note leading-relaxed max-w-xs">
                         {state.dmMessage || '[your content goes here]'}
                       </div>
