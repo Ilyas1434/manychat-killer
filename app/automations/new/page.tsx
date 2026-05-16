@@ -343,9 +343,9 @@ export default function NewAutomation() {
                   className="w-full bg-surface border border-border rounded-2xl px-5 py-4 text-sm text-ink placeholder-note focus:outline-none focus:border-green/30 resize-none leading-relaxed transition-colors opacity-70"
                 />
                 <div className="flex items-center gap-2 mt-2 px-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber flex-shrink-0" />
+                  <div className="w-1.5 h-1.5 rounded-full bg-green flex-shrink-0" />
                   <p className="text-xs text-prose">
-                    Zernio doesn't support auto-reply detection yet — go to your inbox, find their reply, paste this message manually.
+                    Sent automatically by the poller when they reply with their email — no action needed from you.
                   </p>
                 </div>
               </div>
