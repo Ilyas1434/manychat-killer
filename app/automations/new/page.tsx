@@ -11,6 +11,7 @@ type Reel = {
 type State = {
   reel: Reel | null; triggerType: 'keyword' | 'any'
   keywords: string[]; matchMode: 'contains' | 'exact'
+  collectEmail: boolean; emailAsk: string
   dmMessage: string; commentReply: string; name: string
 }
 
@@ -51,7 +52,9 @@ export default function NewAutomation() {
   const [kwInput,     setKwInput]     = useState('')
   const [state, set_] = useState<State>({
     reel: null, triggerType: 'keyword', keywords: [],
-    matchMode: 'contains', dmMessage: '', commentReply: '', name: '',
+    matchMode: 'contains', collectEmail: false,
+    emailAsk: "Hey! 👋 What's your email? I'll send everything straight to your inbox 📧",
+    dmMessage: '', commentReply: '', name: '',
   })
   const set = (p: Partial<State>) => set_(s => ({ ...s, ...p }))
 
@@ -75,12 +78,17 @@ export default function NewAutomation() {
   const canNext = () => {
     if (step === 0) return !!state.reel
     if (step === 1) return state.triggerType === 'any' || state.keywords.length > 0
-    if (step === 2) return state.dmMessage.trim().length > 0
+    if (step === 2) return state.collectEmail
+      ? state.emailAsk.trim().length > 0
+      : state.dmMessage.trim().length > 0
     return true
   }
 
   const launch = async () => {
     setSubmitting(true)
+    // When collecting email first, the auto-sent DM is the email ask.
+    // The actual content DM is stored in the name for reference.
+    const sentDM = state.collectEmail ? state.emailAsk : state.dmMessage
     await fetch('/api/automations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -88,11 +96,24 @@ export default function NewAutomation() {
         platformPostId: state.reel!.id,
         postTitle:      state.reel!.content.slice(0, 80),
         name:           state.name.trim() || `${state.reel!.content.slice(0, 35)}… → DM`,
-        dmMessage:      state.dmMessage,
+        dmMessage:      sentDM,
         ...(state.triggerType === 'keyword' && { keywords: state.keywords, matchMode: state.matchMode }),
         ...(state.commentReply.trim() && { commentReply: state.commentReply.trim() }),
       }),
     })
+
+    // Register email-collect config so the poller knows to auto-send the follow-up
+    if (state.collectEmail && state.emailAsk.trim()) {
+      await fetch('/api/email-collect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emailAskText: state.emailAsk,
+          followUpDM:   state.dmMessage,
+        }),
+      })
+    }
+
     setSubmitting(false)
     router.push('/automations')
   }
@@ -246,26 +267,144 @@ export default function NewAutomation() {
         <div className="step-in space-y-7">
           <p className="text-prose">Write the messages your commenter receives</p>
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="font-mono text-xs text-note uppercase tracking-widest">DM Message</label>
-              <span className={`font-mono text-xs ${state.dmMessage.length > 900 ? 'text-danger' : 'text-note'}`}>
-                {state.dmMessage.length}/1000
-              </span>
+          {/* Collect email toggle */}
+          <div
+            onClick={() => set({ collectEmail: !state.collectEmail })}
+            className={`flex items-center justify-between p-5 rounded-2xl border cursor-pointer transition-all select-none ${
+              state.collectEmail
+                ? 'border-green/50 bg-green-lo'
+                : 'border-border bg-surface hover:border-border-hi'
+            }`}
+          >
+            <div>
+              <div className="text-sm font-semibold text-ink mb-0.5">Collect Email First</div>
+              <div className="text-xs text-prose">
+                Auto-DM asks for their email — you follow up with the content manually
+              </div>
             </div>
-            <textarea
-              value={state.dmMessage}
-              onChange={e => set({ dmMessage: e.target.value })}
-              rows={5}
-              maxLength={1000}
-              placeholder={"Hey! Thanks for commenting — here's what you asked for 👇\n\n[your link or info]"}
-              className="w-full bg-surface border border-border rounded-2xl px-5 py-4 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
-            />
+            <div className={`w-11 h-6 rounded-full transition-all flex-shrink-0 ml-4 relative ${
+              state.collectEmail ? 'bg-green' : 'bg-raised border border-border'
+            }`}>
+              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
+                state.collectEmail ? 'left-6' : 'left-1'
+              }`} />
+            </div>
           </div>
 
+          {/* Email collect flow */}
+          {state.collectEmail ? (
+            <div className="space-y-5">
+              {/* Step 1 — auto DM */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-5 h-5 rounded-full bg-green flex items-center justify-center font-mono text-[10px] font-bold text-bg flex-shrink-0">1</div>
+                  <label className="font-mono text-xs text-note uppercase tracking-widest">Auto-Sent DM — asks for email</label>
+                  <span className={`ml-auto font-mono text-xs ${state.emailAsk.length > 900 ? 'text-danger' : 'text-note'}`}>
+                    {state.emailAsk.length}/1000
+                  </span>
+                </div>
+                <textarea
+                  value={state.emailAsk}
+                  onChange={e => set({ emailAsk: e.target.value })}
+                  rows={3}
+                  maxLength={1000}
+                  className="w-full bg-surface border border-border rounded-2xl px-5 py-4 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
+                />
+              </div>
+
+              {/* Step 2 — manual content */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-5 h-5 rounded-full bg-raised border border-border flex items-center justify-center font-mono text-[10px] text-note flex-shrink-0">2</div>
+                  <label className="font-mono text-xs text-note uppercase tracking-widest">Your Content DM — send manually after they reply</label>
+                </div>
+                <textarea
+                  value={state.dmMessage}
+                  onChange={e => set({ dmMessage: e.target.value })}
+                  rows={4}
+                  maxLength={1000}
+                  placeholder={"Here's what you asked for 👇\n\n[your link, guide, or resource]"}
+                  className="w-full bg-surface border border-border rounded-2xl px-5 py-4 text-sm text-ink placeholder-note focus:outline-none focus:border-green/30 resize-none leading-relaxed transition-colors opacity-70"
+                />
+                <div className="flex items-center gap-2 mt-2 px-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber flex-shrink-0" />
+                  <p className="text-xs text-prose">
+                    Zernio doesn't support auto-reply detection yet — go to your inbox, find their reply, paste this message manually.
+                  </p>
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div className="bg-[#0c0c0c] border border-border rounded-2xl p-5">
+                <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-4">Flow Preview</div>
+                <div className="space-y-3">
+                  <div className="flex gap-3 items-start">
+                    <div className="w-7 h-7 rounded-full bg-green-lo border border-green/30 flex items-center justify-center text-green text-xs flex-shrink-0">◆</div>
+                    <div>
+                      <div className="font-mono text-[10px] text-green mb-1">BOT · AUTO-SENT</div>
+                      <div className="bg-raised rounded-2xl rounded-tl-none px-4 py-3 text-sm text-ink leading-relaxed max-w-xs">
+                        {state.emailAsk}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 items-start justify-end">
+                    <div>
+                      <div className="font-mono text-[10px] text-note text-right mb-1">THEM · REPLIES</div>
+                      <div className="bg-[#1a1a1a] border border-border rounded-2xl rounded-tr-none px-4 py-3 text-sm text-prose">
+                        their@email.com
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 items-start">
+                    <div className="w-7 h-7 rounded-full bg-raised border border-border flex items-center justify-center text-note text-xs flex-shrink-0">👤</div>
+                    <div>
+                      <div className="font-mono text-[10px] text-note mb-1">YOU · MANUAL FOLLOW-UP</div>
+                      <div className="bg-raised border border-border border-dashed rounded-2xl rounded-tl-none px-4 py-3 text-sm text-note leading-relaxed max-w-xs">
+                        {state.dmMessage || '[your content goes here]'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Standard DM flow */
+            <div className="space-y-6">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="font-mono text-xs text-note uppercase tracking-widest">DM Message</label>
+                  <span className={`font-mono text-xs ${state.dmMessage.length > 900 ? 'text-danger' : 'text-note'}`}>
+                    {state.dmMessage.length}/1000
+                  </span>
+                </div>
+                <textarea
+                  value={state.dmMessage}
+                  onChange={e => set({ dmMessage: e.target.value })}
+                  rows={5}
+                  maxLength={1000}
+                  placeholder={"Hey! Thanks for commenting — here's what you asked for 👇\n\n[your link or info]"}
+                  className="w-full bg-surface border border-border rounded-2xl px-5 py-4 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
+                />
+              </div>
+
+              {state.dmMessage && (
+                <div className="bg-[#0c0c0c] border border-border rounded-2xl p-5">
+                  <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-4">DM Preview</div>
+                  <div className="flex gap-3 items-start">
+                    <div className="w-8 h-8 rounded-full bg-raised border border-border flex-shrink-0" />
+                    <div className="bg-raised rounded-2xl rounded-tl-none px-4 py-3 text-sm text-ink leading-relaxed max-w-sm">
+                      {state.dmMessage}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Comment reply (always shown) */}
           <div>
             <label className="font-mono text-xs text-note uppercase tracking-widest block mb-2">
-              Public Comment Reply <span className="text-[#2a2a2a] normal-case tracking-normal">· optional</span>
+              Public Comment Reply <span className="text-[#333] normal-case tracking-normal font-sans">· optional</span>
             </label>
             <input
               value={state.commentReply}
@@ -275,18 +414,6 @@ export default function NewAutomation() {
             />
             <p className="text-xs text-note mt-2">Appears publicly as a reply under their comment</p>
           </div>
-
-          {state.dmMessage && (
-            <div className="bg-[#0c0c0c] border border-border rounded-2xl p-5">
-              <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-4">DM Preview</div>
-              <div className="flex gap-3 items-start">
-                <div className="w-8 h-8 rounded-full bg-raised border border-border flex-shrink-0" />
-                <div className="bg-raised rounded-2xl rounded-tl-none px-4 py-3 text-sm text-ink leading-relaxed max-w-sm">
-                  {state.dmMessage}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -309,11 +436,14 @@ export default function NewAutomation() {
 
           <div className="bg-surface border border-border rounded-2xl overflow-hidden">
             {[
-              ['Reel',    state.reel?.content?.slice(0, 70) + '…'                              ],
+              ['Reel',    state.reel?.content?.slice(0, 70) + '…'                                   ],
               ['Trigger', state.triggerType === 'any' ? 'Any comment' : state.keywords.map(k=>`"${k}"`).join(', ')],
-              ['Match',   state.triggerType === 'any' ? '—' : state.matchMode                   ],
-              ['DM',      state.dmMessage.slice(0, 80) + (state.dmMessage.length > 80 ? '…':'')],
-              ['Reply',   state.commentReply || '—'                                             ],
+              ['Match',   state.triggerType === 'any' ? '—' : state.matchMode                        ],
+              ['Mode',    state.collectEmail ? '📧 Collect email first' : '⚡ Send DM immediately'   ],
+              ['Auto DM', state.collectEmail
+                ? state.emailAsk.slice(0, 60) + (state.emailAsk.length > 60 ? '…' : '')
+                : state.dmMessage.slice(0, 60) + (state.dmMessage.length > 60 ? '…' : '')           ],
+              ['Reply',   state.commentReply || '—'                                                  ],
             ].map(([label, value], i, arr) => (
               <div key={label} className={`flex gap-8 px-6 py-4 ${i < arr.length - 1 ? 'border-b border-border' : ''}`}>
                 <div className="font-mono text-xs text-note w-16 flex-shrink-0 pt-0.5 uppercase tracking-wider">{label}</div>

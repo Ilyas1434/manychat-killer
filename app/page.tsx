@@ -1,7 +1,90 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
+
+type PollerResult = { conversationId: string; participantName: string; emailFound: string; dmSent: boolean; error?: string }
+type PollerStatus = { state: 'idle' | 'running' | 'done' | 'error'; sent: number; checked: number; results: PollerResult[]; lastRun?: string }
+
+function EmailPoller() {
+  const [status, setStatus] = useState<PollerStatus>({ state: 'idle', sent: 0, checked: 0, results: [] })
+  const [hasConfigs, setHasConfigs] = useState(false)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const runPoll = useCallback(async () => {
+    setStatus(s => ({ ...s, state: 'running' }))
+    try {
+      const r = await fetch('/api/poller')
+      const d = await r.json()
+      setStatus({ state: 'done', sent: d.sent ?? 0, checked: d.checkedConversations ?? 0, results: d.results ?? [], lastRun: new Date().toLocaleTimeString() })
+    } catch {
+      setStatus(s => ({ ...s, state: 'error', lastRun: new Date().toLocaleTimeString() }))
+    }
+  }, [])
+
+  useEffect(() => {
+    fetch('/api/email-collect').then(r => r.json()).then(d => {
+      if (d.configs?.length > 0) {
+        setHasConfigs(true)
+        runPoll()
+        intervalRef.current = setInterval(runPoll, 2 * 60 * 1000)
+      }
+    })
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+  }, [runPoll])
+
+  if (!hasConfigs) return null
+
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-6 mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className={`w-2 h-2 rounded-full ${
+            status.state === 'running' ? 'bg-amber animate-pulse' :
+            status.state === 'done'    ? 'bg-green' : 'bg-note'
+          }`} />
+          <span className="text-sm font-semibold text-ink">Email Poller</span>
+          <span className="font-mono text-xs text-note">· auto-runs every 2 min</span>
+        </div>
+        <button
+          onClick={runPoll}
+          disabled={status.state === 'running'}
+          className="font-mono text-xs text-prose hover:text-ink disabled:opacity-40 transition-colors border border-border hover:border-border-hi px-3 py-1.5 rounded-lg"
+        >
+          {status.state === 'running' ? '⟳ Scanning…' : '↺ Run Now'}
+        </button>
+      </div>
+
+      <div className="flex items-center gap-6 mb-4">
+        <div>
+          <div className="font-mono text-2xl font-semibold text-green">{status.sent}</div>
+          <div className="font-mono text-[10px] text-note">follow-ups sent</div>
+        </div>
+        <div>
+          <div className="font-mono text-2xl font-semibold text-prose">{status.checked}</div>
+          <div className="font-mono text-[10px] text-note">convos scanned</div>
+        </div>
+        {status.lastRun && (
+          <div className="ml-auto font-mono text-[10px] text-note">last run {status.lastRun}</div>
+        )}
+      </div>
+
+      {status.results.filter(r => r.dmSent).length > 0 && (
+        <div className="border-t border-border pt-4 space-y-2">
+          {status.results.filter(r => r.dmSent).map(r => (
+            <div key={r.conversationId} className="flex items-center gap-3 text-sm slide-in">
+              <div className="w-1.5 h-1.5 rounded-full bg-green flex-shrink-0" />
+              <span className="text-ink font-medium">{r.participantName}</span>
+              <span className="text-note">replied with</span>
+              <span className="font-mono text-prose text-xs">{r.emailFound}</span>
+              <span className="ml-auto text-green text-xs font-mono">DM SENT ✓</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 type Automation = {
   id?: string
@@ -71,6 +154,8 @@ export default function Dashboard() {
           <span className="text-base">+</span> New Automation
         </Link>
       </div>
+
+      <EmailPoller />
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4 mb-10">
