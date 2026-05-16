@@ -1,0 +1,16 @@
+name: Email Collect Poller
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # every 5 minutes, 24/7
+  workflow_dispatch:          # manual trigger from GitHub UI
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping poller
+        run: |
+          curl -sf "${{ secrets.DASHBOARD_URL }}/api/poller" \
+            -H "x-poller-secret: ${{ secrets.POLLER_SECRET }}" \
+            || echo "Poller returned non-2xx (ok if no email-collect automations yet)"

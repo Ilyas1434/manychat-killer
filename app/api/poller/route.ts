@@ -5,7 +5,15 @@ import { getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-stor
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
 
-export async function GET() {
+export async function GET(req: Request) {
+  // Allow open access locally; require secret header in production
+  if (process.env.NODE_ENV === 'production' && process.env.POLLER_SECRET) {
+    const header = req.headers.get('x-poller-secret')
+    if (header !== process.env.POLLER_SECRET) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  }
+
   const configs = await getConfigs()
   if (configs.length === 0) {
     return NextResponse.json({ message: 'No email-collect automations configured.', sent: [] })
