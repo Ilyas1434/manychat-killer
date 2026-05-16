@@ -5,11 +5,13 @@ import { getConfigForConversation, getConfigs, isProcessed, markProcessed } from
 import { sendEmail } from '@/lib/email-sender'
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
+const L = (msg: string) => console.log(`[webhook] ${msg}`)
 
 export async function POST(req: Request) {
   const payload = await req.json()
 
-  // Only care about incoming DMs
+  L(`event=${payload.event} direction=${payload.message?.direction}`)
+
   if (payload.event !== 'message.received') return NextResponse.json({ ok: true })
   if (payload.message?.direction !== 'incoming') return NextResponse.json({ ok: true })
 
@@ -17,21 +19,22 @@ export async function POST(req: Request) {
   const conversationId = payload.message?.conversationId
   const senderName     = payload.message?.sender?.name ?? 'unknown'
 
-  if (!conversationId || !text) return NextResponse.json({ ok: true })
+  L(`convId=${conversationId} text="${text.slice(0,40)}"`)
 
-  // Check if message contains an email address
+  if (!conversationId || !text) return NextResponse.json({ ok: true, bail: 'no-conv-or-text' })
+
   const emailMatch = EMAIL_RE.exec(text)
-  if (!emailMatch) return NextResponse.json({ ok: true })
+  if (!emailMatch) return NextResponse.json({ ok: true, bail: 'no-email-in-text' })
   const emailFound = emailMatch[0]
 
-  // Don't double-send
-  if (await isProcessed(conversationId)) return NextResponse.json({ ok: true, skipped: 'already_processed' })
+  L(`email found: ${emailFound}`)
 
-  // Load email-collect configs
+  if (await isProcessed(conversationId)) return NextResponse.json({ ok: true, bail: 'already-processed' })
+
   const configs = await getConfigs()
-  if (configs.length === 0) return NextResponse.json({ ok: true })
+  L(`configs loaded: ${configs.length}`)
+  if (configs.length === 0) return NextResponse.json({ ok: true, bail: 'no-configs' })
 
-  // Fetch conversation messages to find which email-ask was sent
   const z = getZernio()
   const { data: msgData }: any = await z.messages.getInboxConversationMessages({
     path:  { conversationId },
@@ -40,34 +43,38 @@ export async function POST(req: Request) {
   const messages: any[] = (msgData?.messages ?? []).sort(
     (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   )
+  L(`messages fetched: ${messages.length}`)
 
-  // Match to the correct per-automation config
   const outgoingTexts = messages
     .filter((m: any) => m.direction === 'outgoing')
     .map((m: any) => m.message ?? '')
-  const matchedConfig = await getConfigForConversation(outgoingTexts)
-  if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true })
+  L(`outgoing msgs: ${outgoingTexts.length} | first60: "${outgoingTexts[0]?.slice(0,60)}"`)
 
-  // Make sure our email-ask came before their email reply
+  const matchedConfig = await getConfigForConversation(outgoingTexts)
+  L(`matchedConfig: ${matchedConfig ? matchedConfig.automationId : 'NONE'}`)
+  if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true, bail: 'no-matched-config' })
+
   const askMsg = messages.find((m: any) =>
     m.direction === 'outgoing' &&
     (m.message ?? '').trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 60))
   )
-  if (!askMsg) return NextResponse.json({ ok: true })
+  L(`askMsg found: ${!!askMsg}`)
+  if (!askMsg) return NextResponse.json({ ok: true, bail: 'no-ask-msg' })
 
-  // Guard: only skip if the follow-up was already sent AFTER this specific incoming email
   const incomingTime = new Date(payload.message?.sentAt ?? payload.message?.createdAt ?? Date.now())
+  L(`incomingTime: ${incomingTime.toISOString()}`)
   const alreadyReplied = messages.some((m: any) =>
     m.direction === 'outgoing' &&
     new Date(m.createdAt ?? m.sentAt) > incomingTime &&
     (m.message ?? '').trim() === matchedConfig.followUpDM.trim()
   )
+  L(`alreadyReplied: ${alreadyReplied}`)
   if (alreadyReplied) {
     await markProcessed(conversationId)
-    return NextResponse.json({ ok: true, skipped: 'already_replied' })
+    return NextResponse.json({ ok: true, bail: 'already-replied' })
   }
 
-  // Fire DM + email simultaneously
+  L(`firing DM to convId=${conversationId}`)
   const [dmResult, emailResult] = await Promise.allSettled([
     z.messages.sendInboxMessage({
       path: { conversationId } as any,
@@ -81,19 +88,16 @@ export async function POST(req: Request) {
   ])
 
   await markProcessed(conversationId)
-
-  console.log(`[webhook] ${senderName} replied with ${emailFound} — DM: ${dmResult.status}, email: ${emailResult.status}`)
+  L(`done — DM: ${dmResult.status}${dmResult.status==='rejected'?' ERR:'+( dmResult as any).reason?.message:''} | email: ${emailResult.status}`)
 
   return NextResponse.json({
-    ok:         true,
-    emailFound,
-    senderName,
-    dmSent:     dmResult.status === 'fulfilled',
-    emailSent:  emailResult.status === 'fulfilled',
+    ok: true, emailFound, senderName,
+    dmSent:    dmResult.status === 'fulfilled',
+    emailSent: emailResult.status === 'fulfilled',
+    dmError:   dmResult.status === 'rejected' ? (dmResult as any).reason?.message : undefined,
   })
 }
 
-// Zernio sends a GET to verify the endpoint on registration
 export async function GET() {
   return NextResponse.json({ ok: true })
 }
