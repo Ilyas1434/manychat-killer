@@ -3,8 +3,9 @@ import { getConfigs, addConfig, type EmailCollectConfig } from '@/lib/email-coll
 import { randomUUID } from 'crypto'
 
 export async function GET() {
-  const configs = await getConfigs()
-  return NextResponse.json({ configs })
+  const configs  = await getConfigs()
+  const usingEnv = !process.env.KV_REST_API_URL && !!process.env.VERCEL
+  return NextResponse.json({ configs, usingEnv })
 }
 
 export async function POST(req: Request) {
