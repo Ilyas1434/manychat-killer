@@ -55,9 +55,11 @@ export async function POST(req: Request) {
   )
   if (!askMsg) return NextResponse.json({ ok: true })
 
-  // Guard: don't send if we already sent this exact follow-up DM
+  // Guard: only skip if the follow-up was already sent AFTER this specific incoming email
+  const incomingTime = new Date(payload.message?.sentAt ?? payload.message?.createdAt ?? Date.now())
   const alreadyReplied = messages.some((m: any) =>
     m.direction === 'outgoing' &&
+    new Date(m.createdAt ?? m.sentAt) > incomingTime &&
     (m.message ?? '').trim() === matchedConfig.followUpDM.trim()
   )
   if (alreadyReplied) {
