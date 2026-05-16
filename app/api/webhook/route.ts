@@ -10,6 +10,7 @@ const L = (msg: string) => console.log(`[webhook] ${msg}`)
 export async function POST(req: Request) {
   const payload = await req.json()
 
+  L(`FULL PAYLOAD: ${JSON.stringify(payload)}`)
   L(`event=${payload.event} direction=${payload.message?.direction}`)
 
   if (payload.event !== 'message.received') return NextResponse.json({ ok: true })
@@ -21,19 +22,19 @@ export async function POST(req: Request) {
 
   L(`convId=${conversationId} text="${text.slice(0,40)}"`)
 
-  if (!conversationId || !text) return NextResponse.json({ ok: true, bail: 'no-conv-or-text' })
+  if (!conversationId || !text) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-conv-or-text', rawPayload: payload })
 
   const emailMatch = EMAIL_RE.exec(text)
-  if (!emailMatch) return NextResponse.json({ ok: true, bail: 'no-email-in-text' })
+  if (!emailMatch) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-email-in-text' })
   const emailFound = emailMatch[0]
 
   L(`email found: ${emailFound}`)
 
-  if (await isProcessed(conversationId)) return NextResponse.json({ ok: true, bail: 'already-processed' })
+  if (await isProcessed(conversationId)) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'already-processed' })
 
   const configs = await getConfigs()
   L(`configs loaded: ${configs.length}`)
-  if (configs.length === 0) return NextResponse.json({ ok: true, bail: 'no-configs' })
+  if (configs.length === 0) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-configs' })
 
   const z = getZernio()
   const { data: msgData }: any = await z.messages.getInboxConversationMessages({
@@ -52,14 +53,14 @@ export async function POST(req: Request) {
 
   const matchedConfig = await getConfigForConversation(outgoingTexts)
   L(`matchedConfig: ${matchedConfig ? matchedConfig.automationId : 'NONE'}`)
-  if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true, bail: 'no-matched-config' })
+  if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-matched-config' })
 
   const askMsg = messages.find((m: any) =>
     m.direction === 'outgoing' &&
     (m.message ?? '').trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 60))
   )
   L(`askMsg found: ${!!askMsg}`)
-  if (!askMsg) return NextResponse.json({ ok: true, bail: 'no-ask-msg' })
+  if (!askMsg) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-ask-msg' })
 
   const incomingTime = new Date(payload.message?.sentAt ?? payload.message?.createdAt ?? Date.now())
   L(`incomingTime: ${incomingTime.toISOString()}`)
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
   L(`alreadyReplied: ${alreadyReplied}`)
   if (alreadyReplied) {
     await markProcessed(conversationId)
-    return NextResponse.json({ ok: true, bail: 'already-replied' })
+    return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'already-replied' })
   }
 
   L(`firing DM to convId=${conversationId}`)
