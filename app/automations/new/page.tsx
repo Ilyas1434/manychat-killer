@@ -11,7 +11,7 @@ type Reel = {
 type State = {
   reel: Reel | null; triggerType: 'keyword' | 'any'
   keywords: string[]; matchMode: 'contains' | 'exact'
-  collectEmail: boolean; emailAsk: string; emailSubject: string
+  requireFollow: boolean; followAsk: string
   dmMessage: string; commentReply: string; name: string
 }
 
@@ -49,13 +49,13 @@ export default function NewAutomation() {
   const [reels,       setReels]       = useState<Reel[]>([])
   const [loaded,      setLoaded]      = useState(false)
   const [submitting,  setSubmitting]  = useState(false)
+  const [error,       setError]       = useState('')
   const [kwInput,     setKwInput]     = useState('')
   const [state, set_] = useState<State>({
     reel: null, triggerType: 'keyword', keywords: [],
-    matchMode: 'contains', collectEmail: false,
-    emailAsk: "Hey! 👋 What's your email? I'll send everything straight to your inbox 📧",
-    emailSubject: "Here's what you asked for!",
-    dmMessage: '', commentReply: '', name: '',
+    matchMode: 'contains', requireFollow: false,
+    followAsk: "Hey! Follow me here, then reply DONE and I'll send it over.",
+    dmMessage: '', commentReply: 'Check your DMs!', name: '',
   })
   const set = (p: Partial<State>) => set_(s => ({ ...s, ...p }))
 
@@ -79,45 +79,74 @@ export default function NewAutomation() {
   const canNext = () => {
     if (step === 0) return !!state.reel
     if (step === 1) return state.triggerType === 'any' || state.keywords.length > 0
-    if (step === 2) return state.collectEmail
-      ? state.emailAsk.trim().length > 0
+    if (step === 2) return state.requireFollow
+      ? state.followAsk.trim().length > 0 && state.dmMessage.trim().length > 0
       : state.dmMessage.trim().length > 0
     return true
   }
 
+  const createdAutomationFrom = (payload: any): any => {
+    const candidates = [
+      payload?.automation,
+      payload?.commentAutomation,
+      payload?.data?.automation,
+      payload?.data?.commentAutomation,
+      payload?.data,
+      payload,
+    ]
+    return candidates.find(item => item?.id || item?._id)
+  }
+
   const launch = async () => {
     setSubmitting(true)
-    // When collecting email first, the auto-sent DM is the email ask.
-    // The actual content DM is stored in the name for reference.
-    const sentDM = state.collectEmail ? state.emailAsk : state.dmMessage
-    await fetch('/api/automations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        platformPostId: state.reel!.id,
-        postTitle:      state.reel!.content.slice(0, 80),
-        name:           state.name.trim() || `${state.reel!.content.slice(0, 35)}… → DM`,
-        dmMessage:      sentDM,
-        ...(state.triggerType === 'keyword' && { keywords: state.keywords, matchMode: state.matchMode }),
-        ...(state.commentReply.trim() && { commentReply: state.commentReply.trim() }),
-      }),
-    })
-
-    // Register email-collect config so the poller knows to auto-send the follow-up
-    if (state.collectEmail && state.emailAsk.trim()) {
-      await fetch('/api/email-collect', {
+    setError('')
+    try {
+      // When requiring a follow first, the auto-sent DM is the follow request.
+      const sentDM = state.requireFollow ? state.followAsk : state.dmMessage
+      const automationName = state.name.trim() || `${state.reel!.content.slice(0, 35)}… → DM`
+      const automationRes = await fetch('/api/automations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          emailAskText: state.emailAsk,
-          followUpDM:   state.dmMessage,
-          emailSubject: state.emailSubject,
+          platformPostId: state.reel!.id,
+          postTitle:      state.reel!.content.slice(0, 80),
+          name:           automationName,
+          dmMessage:      sentDM,
+          ...(state.triggerType === 'keyword' && { keywords: state.keywords, matchMode: state.matchMode }),
+          commentReply:   state.commentReply.trim() || 'Check your DMs!',
         }),
       })
-    }
+      const automationPayload = await automationRes.json()
+      if (!automationRes.ok) throw new Error(automationPayload.error?.message ?? automationPayload.error ?? 'Failed to create automation')
 
-    setSubmitting(false)
-    router.push('/automations')
+      const createdAutomation = createdAutomationFrom(automationPayload)
+      const automationId = createdAutomation?.id ?? createdAutomation?._id
+
+      // Register follow-gated config so the webhook/poller can auto-send the content after they follow and reply.
+      if (state.requireFollow) {
+        if (!automationId) throw new Error('Automation was created, but its ID was missing from the API response.')
+
+        const configRes = await fetch('/api/email-collect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            automationId,
+            automationName,
+            emailAskText: state.followAsk,
+            followUpDM:   state.dmMessage,
+            emailSubject: '',
+            replyTrigger: 'follow',
+          }),
+        })
+        const configPayload = await configRes.json()
+        if (!configRes.ok) throw new Error(configPayload.error ?? 'Failed to register follow-up automation')
+      }
+
+      router.push('/automations')
+    } catch (err: any) {
+      setError(err.message ?? 'Something went wrong while launching this automation.')
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -269,62 +298,48 @@ export default function NewAutomation() {
         <div className="step-in space-y-7">
           <p className="text-prose">Write the messages your commenter receives</p>
 
-          {/* Collect email toggle */}
+          {/* Require follow toggle */}
           <div
-            onClick={() => set({ collectEmail: !state.collectEmail })}
+            onClick={() => set({ requireFollow: !state.requireFollow })}
             className={`flex items-center justify-between p-5 rounded-2xl border cursor-pointer transition-all select-none ${
-              state.collectEmail
+              state.requireFollow
                 ? 'border-green/50 bg-green-lo'
                 : 'border-border bg-surface hover:border-border-hi'
             }`}
           >
             <div>
-              <div className="text-sm font-semibold text-ink mb-0.5">Collect Email First</div>
+              <div className="text-sm font-semibold text-ink mb-0.5">Require Follow First</div>
               <div className="text-xs text-prose">
-                Auto-DM asks for their email — you follow up with the content manually
+                Auto-DM asks them to follow, then sends the content after they reply
               </div>
             </div>
             <div className={`w-11 h-6 rounded-full transition-all flex-shrink-0 ml-4 relative ${
-              state.collectEmail ? 'bg-green' : 'bg-raised border border-border'
+              state.requireFollow ? 'bg-green' : 'bg-raised border border-border'
             }`}>
               <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
-                state.collectEmail ? 'left-6' : 'left-1'
+                state.requireFollow ? 'left-6' : 'left-1'
               }`} />
             </div>
           </div>
 
-          {/* Email collect flow */}
-          {state.collectEmail ? (
+          {/* Follow-gated flow */}
+          {state.requireFollow ? (
             <div className="space-y-5">
               {/* Step 1 — auto DM */}
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-5 h-5 rounded-full bg-green flex items-center justify-center font-mono text-[10px] font-bold text-bg flex-shrink-0">1</div>
-                  <label className="font-mono text-xs text-note uppercase tracking-widest">Auto-Sent DM — asks for email</label>
-                  <span className={`ml-auto font-mono text-xs ${state.emailAsk.length > 900 ? 'text-danger' : 'text-note'}`}>
-                    {state.emailAsk.length}/1000
+                  <label className="font-mono text-xs text-note uppercase tracking-widest">Auto-Sent DM — asks for a follow</label>
+                  <span className={`ml-auto font-mono text-xs ${state.followAsk.length > 900 ? 'text-danger' : 'text-note'}`}>
+                    {state.followAsk.length}/1000
                   </span>
                 </div>
                 <textarea
-                  value={state.emailAsk}
-                  onChange={e => set({ emailAsk: e.target.value })}
+                  value={state.followAsk}
+                  onChange={e => set({ followAsk: e.target.value })}
                   rows={3}
                   maxLength={1000}
                   className="w-full bg-surface border border-border rounded-2xl px-5 py-4 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 resize-none leading-relaxed transition-colors"
-                />
-              </div>
-
-              {/* Email subject */}
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-5 h-5 rounded-full bg-green flex items-center justify-center font-mono text-[10px] font-bold text-bg flex-shrink-0">@</div>
-                  <label className="font-mono text-xs text-note uppercase tracking-widest">Email Subject Line</label>
-                </div>
-                <input
-                  value={state.emailSubject}
-                  onChange={e => set({ emailSubject: e.target.value })}
-                  placeholder="Here's what you asked for!"
-                  className="w-full bg-surface border border-border rounded-xl px-4 py-2.5 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 transition-colors"
                 />
               </div>
 
@@ -332,7 +347,7 @@ export default function NewAutomation() {
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-5 h-5 rounded-full bg-raised border border-border flex items-center justify-center font-mono text-[10px] text-note flex-shrink-0">2</div>
-                  <label className="font-mono text-xs text-note uppercase tracking-widest">Your Content DM — auto-sent when they reply with their email</label>
+                  <label className="font-mono text-xs text-note uppercase tracking-widest">Your Content DM — auto-sent after they follow and reply</label>
                 </div>
                 <textarea
                   value={state.dmMessage}
@@ -345,7 +360,7 @@ export default function NewAutomation() {
                 <div className="flex items-center gap-2 mt-2 px-1">
                   <div className="w-1.5 h-1.5 rounded-full bg-green flex-shrink-0" />
                   <p className="text-xs text-prose">
-                    Sent automatically by the poller when they reply with their email — no action needed from you.
+                    Sent automatically by the webhook or poller once Zernio shows them as a follower.
                   </p>
                 </div>
               </div>
@@ -359,7 +374,7 @@ export default function NewAutomation() {
                     <div>
                       <div className="font-mono text-[10px] text-green mb-1">BOT · AUTO-SENT</div>
                       <div className="bg-raised rounded-2xl rounded-tl-none px-4 py-3 text-sm text-ink leading-relaxed max-w-xs">
-                        {state.emailAsk}
+                        {state.followAsk}
                       </div>
                     </div>
                   </div>
@@ -367,7 +382,7 @@ export default function NewAutomation() {
                     <div>
                       <div className="font-mono text-[10px] text-note text-right mb-1">THEM · REPLIES</div>
                       <div className="bg-[#1a1a1a] border border-border rounded-2xl rounded-tr-none px-4 py-3 text-sm text-prose">
-                        their@email.com
+                        Done
                       </div>
                     </div>
                   </div>
@@ -455,9 +470,9 @@ export default function NewAutomation() {
               ['Reel',    state.reel?.content?.slice(0, 70) + '…'                                   ],
               ['Trigger', state.triggerType === 'any' ? 'Any comment' : state.keywords.map(k=>`"${k}"`).join(', ')],
               ['Match',   state.triggerType === 'any' ? '—' : state.matchMode                        ],
-              ['Mode',    state.collectEmail ? '📧 Collect email first' : '⚡ Send DM immediately'   ],
-              ['Auto DM', state.collectEmail
-                ? state.emailAsk.slice(0, 60) + (state.emailAsk.length > 60 ? '…' : '')
+              ['Mode',    state.requireFollow ? 'Follow required first' : 'Send DM immediately'      ],
+              ['Auto DM', state.requireFollow
+                ? state.followAsk.slice(0, 60) + (state.followAsk.length > 60 ? '…' : '')
                 : state.dmMessage.slice(0, 60) + (state.dmMessage.length > 60 ? '…' : '')           ],
               ['Reply',   state.commentReply || '—'                                                  ],
             ].map(([label, value], i, arr) => (
@@ -475,6 +490,9 @@ export default function NewAutomation() {
           >
             {submitting ? <><span className="animate-spin">◆</span> Launching…</> : <>⚡ Launch Automation</>}
           </button>
+          {error && (
+            <p className="text-sm text-danger text-center">{error}</p>
+          )}
         </div>
       )}
 

@@ -8,7 +8,7 @@ type Automation = {
 }
 type Config = {
   automationId: string; automationName: string; emailAskText: string
-  followUpDM: string; emailSubject: string; updatedAt: string
+  followUpDM: string; emailSubject: string; replyTrigger?: 'email' | 'follow'; updatedAt: string
 }
 
 function AutomationRow({
@@ -23,7 +23,6 @@ function AutomationRow({
   const [saving,  setSaving]  = useState(false)
   const [deleting,setDeleting]= useState(false)
   const [followUp,setFollowUp]= useState(config?.followUpDM     ?? '')
-  const [subject, setSubject] = useState(config?.emailSubject   ?? "Here's what you asked for!")
 
   const save = async () => {
     setSaving(true)
@@ -32,7 +31,8 @@ function AutomationRow({
       automationName: automation.name!,
       emailAskText:   automation.dmMessage ?? '',
       followUpDM:     followUp,
-      emailSubject:   subject,
+      emailSubject:   '',
+      replyTrigger:   'follow',
       updatedAt:      new Date().toISOString(),
     }
     const res = await fetch('/api/email-collect', {
@@ -51,6 +51,7 @@ function AutomationRow({
   }
 
   const hasConfig = !!config
+  const badge = config?.replyTrigger === 'follow' ? 'FOLLOW GATE ON' : 'EMAIL COLLECT ON'
 
   return (
     <div className={`bg-surface border rounded-2xl overflow-hidden transition-all ${open ? 'border-green/40' : 'border-border hover:border-border-hi'}`}>
@@ -64,7 +65,7 @@ function AutomationRow({
 
         <div className="flex items-center gap-3 flex-shrink-0">
           {hasConfig ? (
-            <span className="font-mono text-[10px] bg-green-lo text-green px-2.5 py-1 rounded-lg">EMAIL COLLECT ON</span>
+            <span className="font-mono text-[10px] bg-green-lo text-green px-2.5 py-1 rounded-lg">{badge}</span>
           ) : (
             <span className="font-mono text-[10px] bg-raised text-note px-2.5 py-1 rounded-lg">OFF</span>
           )}
@@ -94,7 +95,7 @@ function AutomationRow({
           {/* Read-only: email ask */}
           <div>
             <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-2">
-              Auto-sent DM (asks for email) — pulled from your automation
+              Auto-sent DM (asks for follow) — pulled from your automation
             </div>
             <div className="bg-raised rounded-xl px-4 py-3 text-sm text-prose leading-relaxed opacity-70 select-none">
               {automation.dmMessage}
@@ -104,7 +105,7 @@ function AutomationRow({
           {/* Editable: follow-up DM */}
           <div>
             <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-2">
-              Follow-up DM — sent automatically when they reply with their email
+              Follow-up DM — sent automatically after they follow and reply
             </div>
             <textarea
               value={followUp}
@@ -115,25 +116,12 @@ function AutomationRow({
             />
           </div>
 
-          {/* Editable: email subject */}
-          <div>
-            <div className="font-mono text-[10px] text-note uppercase tracking-widest mb-2">
-              Email Subject Line
-            </div>
-            <input
-              value={subject}
-              onChange={e => setSubject(e.target.value)}
-              placeholder="Here's what you asked for!"
-              className="w-full bg-raised border border-border rounded-xl px-4 py-2.5 text-sm text-ink placeholder-note focus:outline-none focus:border-green/40 transition-colors"
-            />
-          </div>
-
           <button
             onClick={save}
             disabled={saving || !followUp.trim()}
             className="w-full bg-green hover:bg-[#16a34a] disabled:opacity-40 text-bg font-semibold text-sm py-3 rounded-xl transition-colors"
           >
-            {saving ? 'Saving…' : hasConfig ? 'Save Changes' : 'Enable Email Collect'}
+            {saving ? 'Saving…' : hasConfig ? 'Save Changes' : 'Enable Follow Gate'}
           </button>
         </div>
       )}
@@ -167,9 +155,9 @@ export default function Settings() {
     <div className="p-10 max-w-3xl">
       <div className="mb-10">
         <div className="font-mono text-[10px] tracking-[0.25em] text-note mb-2 uppercase">Settings</div>
-        <h1 className="text-3xl font-semibold text-ink tracking-tight">Email Collect</h1>
+        <h1 className="text-3xl font-semibold text-ink tracking-tight">Follow Gate</h1>
         <p className="text-sm text-prose mt-2">
-          Pick any automation and set what to DM people after they reply with their email. Each automation can send something different.
+          Pick any automation and set what to DM people after they follow and reply. Each automation can send something different.
         </p>
       </div>
 

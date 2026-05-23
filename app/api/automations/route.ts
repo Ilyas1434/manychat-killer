@@ -13,8 +13,13 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = await req.json()
   const z = getZernio()
+  const commentReply =
+    typeof body.commentReply === 'string' && body.commentReply.trim()
+      ? body.commentReply.trim()
+      : 'Check your DMs!'
+
   const { data, error } = await z.commentautomations.createCommentAutomation({
-    body: { profileId: PROFILE_ID, accountId: ACCOUNT_ID, ...body },
+    body: { profileId: PROFILE_ID, accountId: ACCOUNT_ID, ...body, commentReply },
   })
   if (error) return NextResponse.json({ error }, { status: 500 })
   return NextResponse.json(data)
