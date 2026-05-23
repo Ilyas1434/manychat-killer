@@ -63,7 +63,7 @@ export async function GET(req: Request) {
 
     const { data: msgData }: any = await z.messages.getInboxConversationMessages({
       path:  { conversationId: conv.id },
-      query: { accountId: ACCOUNT_ID, limit: 20 } as any,
+      query: { accountId: ACCOUNT_ID, limit: 50, sortOrder: 'desc' } as any,
     })
     const messages: any[] = (msgData?.messages ?? []).sort(
       (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()

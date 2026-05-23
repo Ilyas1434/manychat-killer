@@ -48,7 +48,7 @@ export async function POST(req: Request) {
   const z = getZernio()
   const { data: msgData }: any = await z.messages.getInboxConversationMessages({
     path:  { conversationId },
-    query: { accountId: ACCOUNT_ID, limit: 20 } as any,
+    query: { accountId: ACCOUNT_ID, limit: 50, sortOrder: 'desc' } as any,
   })
   const messages: any[] = (msgData?.messages ?? []).sort(
     (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -86,7 +86,7 @@ export async function POST(req: Request) {
   const alreadyReplied = messages.some((m: any) =>
     m.direction === 'outgoing' &&
     new Date(m.createdAt ?? m.sentAt) > incomingTime &&
-    (m.message ?? '').trim() === matchedConfig.followUpDM.trim()
+    messageText(m).trim() === matchedConfig.followUpDM.trim()
   )
   L(`alreadyReplied: ${alreadyReplied}`)
   if (alreadyReplied) {
