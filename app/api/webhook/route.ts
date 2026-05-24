@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server'
-import { getZernio, ACCOUNT_ID } from '@/lib/zernio'
+import { getZernio, ACCOUNT_ID, PROFILE_ID } from '@/lib/zernio'
 import { getConfigById, getConfigForConversation, getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-store'
 import { sendEmail } from '@/lib/email-sender'
 
@@ -18,6 +18,40 @@ const isFollower = (value: any): boolean => {
   return false
 }
 
+/**
+ * Resolve which Comment Automation most recently triggered for a given
+ * Instagram user (commenterId). This is the canonical "which flow is this
+ * person in" answer — comes from Zernio's own logs, not from inspecting
+ * conversation text. Falls back to null if nothing found.
+ */
+async function findActiveAutomationId(z: any, commenterId: string): Promise<string | null> {
+  const { data }: any = await z.commentautomations.listCommentAutomations({
+    query: { profileId: PROFILE_ID } as any,
+  })
+  const automations: any[] = data?.automations ?? []
+  if (!automations.length) return null
+
+  const logHits = await Promise.all(automations.map(async (a) => {
+    try {
+      const res: any = await z.commentautomations.listCommentAutomationLogs({
+        path:  { automationId: a.id },
+        query: { limit: 50 } as any,
+      })
+      const logs: any[] = res.data?.logs ?? []
+      const mine = logs.filter(l => l.commenterId === commenterId)
+      if (!mine.length) return null
+      const newest = mine.reduce((acc, l) =>
+        new Date(l.createdAt) > new Date(acc.createdAt) ? l : acc)
+      return { automationId: a.id, createdAt: newest.createdAt as string }
+    } catch { return null }
+  }))
+
+  const valid = logHits.filter((x): x is { automationId: string; createdAt: string } => !!x)
+  if (!valid.length) return null
+  valid.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  return valid[0].automationId
+}
+
 export async function POST(req: Request) {
   const payload = await req.json()
 
@@ -31,88 +65,88 @@ export async function POST(req: Request) {
   // Zernio webhook sends an internal conversationId — the inbox API uses platformConversationId
   const conversationId = payload.conversation?.platformConversationId ?? payload.message?.conversationId
   const senderName     = payload.message?.sender?.name ?? 'unknown'
+  // Sender's Instagram user ID — same value as `commenterId` on comment-automation logs.
+  const senderIgId     = payload.message?.sender?.id
+                      ?? payload.conversation?.participantId
+                      ?? payload.conversation?.participant?.id
+                      ?? null
 
-  L(`convId=${conversationId} text="${text.slice(0,40)}"`)
+  L(`convId=${conversationId} sender=${senderIgId} text="${text.slice(0,40)}"`)
 
-  if (!conversationId || !text) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-conv-or-text', rawPayload: payload })
+  if (!conversationId || !text) return NextResponse.json({ ok: true, bail: 'no-conv-or-text', rawPayload: payload })
 
   const emailMatch = EMAIL_RE.exec(text)
   if (emailMatch) L(`email found: ${emailMatch[0]}`)
 
-  if (await isProcessed(conversationId)) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'already-processed' })
+  if (await isProcessed(conversationId)) return NextResponse.json({ ok: true, bail: 'already-processed' })
 
   const configs = await getConfigs()
   L(`configs loaded: ${configs.length}`)
-  if (configs.length === 0) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-configs' })
+  if (configs.length === 0) return NextResponse.json({ ok: true, bail: 'no-configs' })
 
   const z = getZernio()
-  const { data: msgData }: any = await z.messages.getInboxConversationMessages({
-    path:  { conversationId },
-    query: { accountId: ACCOUNT_ID, limit: 50, sortOrder: 'desc' } as any,
-  })
-  const messages: any[] = (msgData?.messages ?? []).sort(
-    (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  )
-  L(`messages fetched: ${messages.length}`)
 
-  // Newest-first so the most recent ask wins.
-  const outgoingTexts = messages
-    .filter((m: any) => m.direction === 'outgoing')
-    .map(messageText)
-    .reverse()
-  L(`outgoing msgs: ${outgoingTexts.length} | newest60: "${outgoingTexts[0]?.slice(0,60)}"`)
-
-  // Primary match: find the most recent outgoing message whose text exactly
-  // equals a Zernio automation's dmMessage, then look up the config by that
-  // automationId. Robust to similar ask copy across automations.
+  // Primary: ask Zernio which automation this contact most recently triggered.
   let matchedConfig = null as Awaited<ReturnType<typeof getConfigById>>
-  try {
-    const { data: aData }: any = await z.commentautomations.listCommentAutomations({
-      query: { profileId: process.env.ZERNIO_PROFILE_ID! } as any,
-    })
-    const automations: any[] = aData?.automations ?? []
-    const byDm = new Map<string, string>()  // dmMessage(trimmed) -> automationId
-    for (const a of automations) {
-      if (a.dmMessage && a.id) byDm.set(a.dmMessage.trim(), a.id)
-    }
-    for (const txt of outgoingTexts) {
-      const id = byDm.get((txt ?? '').trim())
-      if (id) {
-        matchedConfig = await getConfigById(id)
-        L(`matched by automationId=${id} → config=${matchedConfig?.automationId ?? 'NONE'}`)
-        if (matchedConfig) break
+  let matchSource = 'none'
+  if (senderIgId) {
+    try {
+      const aid = await findActiveAutomationId(z, String(senderIgId))
+      L(`active automationId for ${senderIgId} = ${aid ?? 'NONE'}`)
+      if (aid) {
+        matchedConfig = await getConfigById(aid)
+        if (matchedConfig) matchSource = 'zernio-logs'
       }
+    } catch (e: any) {
+      L(`zernio-log lookup failed: ${e?.message ?? e}`)
     }
-  } catch (e: any) {
-    L(`automationId-match failed: ${e?.message ?? e}`)
   }
 
-  // Fallback: legacy text-prefix match (handles configs whose dmMessage was edited).
+  // Fallback: legacy conversation-text inference for cases where the log
+  // lookup is unavailable (e.g. sender IG ID missing from the webhook payload).
+  let messages: any[] = []
   if (!matchedConfig) {
+    const { data: msgData }: any = await z.messages.getInboxConversationMessages({
+      path:  { conversationId },
+      query: { accountId: ACCOUNT_ID, limit: 50, sortOrder: 'desc' } as any,
+    })
+    messages = (msgData?.messages ?? []).sort(
+      (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    )
+    const outgoingTexts = messages
+      .filter((m: any) => m.direction === 'outgoing')
+      .map(messageText)
+      .reverse()
     matchedConfig = await getConfigForConversation(outgoingTexts)
-    L(`fallback prefix-match: ${matchedConfig ? matchedConfig.automationId : 'NONE'}`)
+    if (matchedConfig) matchSource = 'text-prefix-fallback'
+    L(`fallback match: ${matchedConfig?.automationId ?? 'NONE'}`)
   }
-  if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-matched-config' })
+
+  L(`matched via ${matchSource}: ${matchedConfig?.automationId ?? 'NONE'}`)
+  if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true, bail: 'no-matched-config' })
   const trigger = matchedConfig.replyTrigger ?? 'email'
 
   if (trigger === 'email' && !emailMatch) {
-    return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-email-in-text' })
+    return NextResponse.json({ ok: true, bail: 'no-email-in-text' })
   }
 
   const follower = isFollower(payload.message) || isFollower(payload.conversation)
   if (trigger === 'follow' && !follower) {
-    return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'not-a-follower' })
+    return NextResponse.json({ ok: true, bail: 'not-a-follower' })
   }
 
-  const askMsg = messages.find((m: any) =>
-    m.direction === 'outgoing' &&
-    messageText(m).trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 60))
-  )
-  L(`askMsg found: ${!!askMsg}`)
-  if (!askMsg) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-ask-msg' })
+  // Load conversation if we haven't yet — needed for duplicate-send check.
+  if (!messages.length) {
+    const { data: msgData }: any = await z.messages.getInboxConversationMessages({
+      path:  { conversationId },
+      query: { accountId: ACCOUNT_ID, limit: 50, sortOrder: 'desc' } as any,
+    })
+    messages = (msgData?.messages ?? []).sort(
+      (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    )
+  }
 
   const incomingTime = new Date(payload.message?.sentAt ?? payload.message?.createdAt ?? Date.now())
-  L(`incomingTime: ${incomingTime.toISOString()}`)
   const alreadyReplied = messages.some((m: any) =>
     m.direction === 'outgoing' &&
     new Date(m.createdAt ?? m.sentAt) > incomingTime &&
@@ -121,10 +155,10 @@ export async function POST(req: Request) {
   L(`alreadyReplied: ${alreadyReplied}`)
   if (alreadyReplied) {
     await markProcessed(conversationId)
-    return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'already-replied' })
+    return NextResponse.json({ ok: true, bail: 'already-replied' })
   }
 
-  L(`firing DM to convId=${conversationId}`)
+  L(`firing DM to convId=${conversationId} | config=${matchedConfig.automationId}`)
   const emailFound = emailMatch?.[0]
   const [dmResult, emailResult] = await Promise.allSettled([
     z.messages.sendInboxMessage({
@@ -144,7 +178,8 @@ export async function POST(req: Request) {
   L(`done — DM: ${dmResult.status}${dmResult.status==='rejected'?' ERR:'+( dmResult as any).reason?.message:''} | email: ${emailResult.status}`)
 
   return NextResponse.json({
-    ok: true, emailFound, follower, senderName,
+    ok: true, emailFound, follower, senderName, matchSource,
+    automationId: matchedConfig.automationId,
     dmSent:    dmResult.status === 'fulfilled',
     emailSent: Boolean(emailFound) && emailResult.status === 'fulfilled',
     dmError:   dmResult.status === 'rejected' ? (dmResult as any).reason?.message : undefined,
