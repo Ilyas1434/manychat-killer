@@ -6,3 +6,4 @@ data/*
 !data/email-collect.json
 *.tsbuildinfo
 .vercel
+.DS_Store
