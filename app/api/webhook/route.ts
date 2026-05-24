@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server'
 import { getZernio, ACCOUNT_ID } from '@/lib/zernio'
-import { getConfigForConversation, getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-store'
+import { getConfigById, getConfigForConversation, getConfigs, isProcessed, markProcessed } from '@/lib/email-collect-store'
 import { sendEmail } from '@/lib/email-sender'
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
@@ -55,16 +55,43 @@ export async function POST(req: Request) {
   )
   L(`messages fetched: ${messages.length}`)
 
-  // Newest-first so the most recent ask wins — otherwise an old automation's
-  // ask text matches first and its follow-up gets sent for a new flow.
+  // Newest-first so the most recent ask wins.
   const outgoingTexts = messages
     .filter((m: any) => m.direction === 'outgoing')
     .map(messageText)
     .reverse()
   L(`outgoing msgs: ${outgoingTexts.length} | newest60: "${outgoingTexts[0]?.slice(0,60)}"`)
 
-  const matchedConfig = await getConfigForConversation(outgoingTexts)
-  L(`matchedConfig: ${matchedConfig ? matchedConfig.automationId : 'NONE'}`)
+  // Primary match: find the most recent outgoing message whose text exactly
+  // equals a Zernio automation's dmMessage, then look up the config by that
+  // automationId. Robust to similar ask copy across automations.
+  let matchedConfig = null as Awaited<ReturnType<typeof getConfigById>>
+  try {
+    const { data: aData }: any = await z.commentautomations.listCommentAutomations({
+      query: { profileId: process.env.ZERNIO_PROFILE_ID! } as any,
+    })
+    const automations: any[] = aData?.automations ?? []
+    const byDm = new Map<string, string>()  // dmMessage(trimmed) -> automationId
+    for (const a of automations) {
+      if (a.dmMessage && a.id) byDm.set(a.dmMessage.trim(), a.id)
+    }
+    for (const txt of outgoingTexts) {
+      const id = byDm.get((txt ?? '').trim())
+      if (id) {
+        matchedConfig = await getConfigById(id)
+        L(`matched by automationId=${id} → config=${matchedConfig?.automationId ?? 'NONE'}`)
+        if (matchedConfig) break
+      }
+    }
+  } catch (e: any) {
+    L(`automationId-match failed: ${e?.message ?? e}`)
+  }
+
+  // Fallback: legacy text-prefix match (handles configs whose dmMessage was edited).
+  if (!matchedConfig) {
+    matchedConfig = await getConfigForConversation(outgoingTexts)
+    L(`fallback prefix-match: ${matchedConfig ? matchedConfig.automationId : 'NONE'}`)
+  }
   if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-matched-config' })
   const trigger = matchedConfig.replyTrigger ?? 'email'
 

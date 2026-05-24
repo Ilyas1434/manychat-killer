@@ -116,6 +116,11 @@ export async function deleteConfig(automationId: string) {
   await setAll(all.filter(c => c.automationId !== automationId))
 }
 
+export async function getConfigById(automationId: string): Promise<EmailCollectConfig | null> {
+  const all = await getAll()
+  return all.find(c => c.automationId === automationId) ?? null
+}
+
 export async function getConfigForConversation(outgoingMessages: string[]): Promise<EmailCollectConfig | null> {
   const all = await getAll()
   for (const msg of outgoingMessages) {
