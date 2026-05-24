@@ -1,0 +1,11 @@
+[
+  {
+    "automationId": "6a12918eb9fa3cd9bec5740c",
+    "automationName": "Comment clients → kaliq link",
+    "emailAskText": "Hey! Drop a follow + send over your email and I'll send this over.",
+    "followUpDM": "Here you go, as promised. Book here to get all set up: https://kaliq.ai/contact",
+    "emailSubject": "Here you go — book your call",
+    "replyTrigger": "email",
+    "updatedAt": "2026-05-24T05:55:00.000Z"
+  }
+]

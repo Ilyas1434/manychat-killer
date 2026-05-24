@@ -2,6 +2,7 @@ node_modules/
 .env
 .next/
 out/
-data/
+data/*
+!data/email-collect.json
 *.tsbuildinfo
 .vercel
