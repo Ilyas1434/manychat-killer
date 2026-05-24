@@ -82,11 +82,13 @@ const tier = () =>
                                                                         'file'
 
 async function getAll(): Promise<EmailCollectConfig[]> {
-  switch (tier()) {
-    case 'kv':   return kvGet()
-    case 'gist': return gistGet()
-    default:     return fileGet()
-  }
+  // Always merge the committed data/email-collect.json on top of the active
+  // tier — seeds new automations without needing tier write access.
+  const primary = tier() === 'kv' ? await kvGet() : tier() === 'gist' ? await gistGet() : []
+  const seed    = await fileGet()
+  const byId    = new Map(primary.map(c => [c.automationId, c]))
+  for (const c of seed) byId.set(c.automationId, c)  // seed wins
+  return [...byId.values()]
 }
 async function setAll(configs: EmailCollectConfig[]) {
   switch (tier()) {

@@ -55,10 +55,13 @@ export async function POST(req: Request) {
   )
   L(`messages fetched: ${messages.length}`)
 
+  // Newest-first so the most recent ask wins — otherwise an old automation's
+  // ask text matches first and its follow-up gets sent for a new flow.
   const outgoingTexts = messages
     .filter((m: any) => m.direction === 'outgoing')
     .map(messageText)
-  L(`outgoing msgs: ${outgoingTexts.length} | first60: "${outgoingTexts[0]?.slice(0,60)}"`)
+    .reverse()
+  L(`outgoing msgs: ${outgoingTexts.length} | newest60: "${outgoingTexts[0]?.slice(0,60)}"`)
 
   const matchedConfig = await getConfigForConversation(outgoingTexts)
   L(`matchedConfig: ${matchedConfig ? matchedConfig.automationId : 'NONE'}`)
