@@ -6,6 +6,17 @@ import { sendEmail } from '@/lib/email-sender'
 
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/
 const L = (msg: string) => console.log(`[webhook] ${msg}`)
+const messageText = (m: any) => m.message ?? m.text ?? ''
+const isFollower = (value: any): boolean => {
+  if (!value) return false
+  if (value.instagramProfile?.isFollower === true) return true
+  if (value.participant?.instagramProfile?.isFollower === true) return true
+  if (value.sender?.instagramProfile?.isFollower === true) return true
+  if (Array.isArray(value.participants)) {
+    return value.participants.some((p: any) => p?.instagramProfile?.isFollower === true)
+  }
+  return false
+}
 
 export async function POST(req: Request) {
   const payload = await req.json()
@@ -26,10 +37,7 @@ export async function POST(req: Request) {
   if (!conversationId || !text) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-conv-or-text', rawPayload: payload })
 
   const emailMatch = EMAIL_RE.exec(text)
-  if (!emailMatch) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-email-in-text' })
-  const emailFound = emailMatch[0]
-
-  L(`email found: ${emailFound}`)
+  if (emailMatch) L(`email found: ${emailMatch[0]}`)
 
   if (await isProcessed(conversationId)) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'already-processed' })
 
@@ -40,7 +48,7 @@ export async function POST(req: Request) {
   const z = getZernio()
   const { data: msgData }: any = await z.messages.getInboxConversationMessages({
     path:  { conversationId },
-    query: { accountId: ACCOUNT_ID, limit: 20 } as any,
+    query: { accountId: ACCOUNT_ID, limit: 50, sortOrder: 'desc' } as any,
   })
   const messages: any[] = (msgData?.messages ?? []).sort(
     (a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -49,16 +57,26 @@ export async function POST(req: Request) {
 
   const outgoingTexts = messages
     .filter((m: any) => m.direction === 'outgoing')
-    .map((m: any) => m.message ?? '')
+    .map(messageText)
   L(`outgoing msgs: ${outgoingTexts.length} | first60: "${outgoingTexts[0]?.slice(0,60)}"`)
 
   const matchedConfig = await getConfigForConversation(outgoingTexts)
   L(`matchedConfig: ${matchedConfig ? matchedConfig.automationId : 'NONE'}`)
   if (!matchedConfig?.followUpDM) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-matched-config' })
+  const trigger = matchedConfig.replyTrigger ?? 'email'
+
+  if (trigger === 'email' && !emailMatch) {
+    return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-email-in-text' })
+  }
+
+  const follower = isFollower(payload.message) || isFollower(payload.conversation)
+  if (trigger === 'follow' && !follower) {
+    return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'not-a-follower' })
+  }
 
   const askMsg = messages.find((m: any) =>
     m.direction === 'outgoing' &&
-    (m.message ?? '').trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 60))
+    messageText(m).trim().startsWith(matchedConfig.emailAskText.trim().slice(0, 60))
   )
   L(`askMsg found: ${!!askMsg}`)
   if (!askMsg) return NextResponse.json({ ok: true, rawMsg: payload.message, bail: 'no-ask-msg' })
@@ -68,7 +86,7 @@ export async function POST(req: Request) {
   const alreadyReplied = messages.some((m: any) =>
     m.direction === 'outgoing' &&
     new Date(m.createdAt ?? m.sentAt) > incomingTime &&
-    (m.message ?? '').trim() === matchedConfig.followUpDM.trim()
+    messageText(m).trim() === matchedConfig.followUpDM.trim()
   )
   L(`alreadyReplied: ${alreadyReplied}`)
   if (alreadyReplied) {
@@ -77,25 +95,28 @@ export async function POST(req: Request) {
   }
 
   L(`firing DM to convId=${conversationId}`)
+  const emailFound = emailMatch?.[0]
   const [dmResult, emailResult] = await Promise.allSettled([
     z.messages.sendInboxMessage({
       path: { conversationId } as any,
       body: { accountId: ACCOUNT_ID, message: matchedConfig.followUpDM },
     }),
-    sendEmail({
-      to:      emailFound,
-      subject: matchedConfig.emailSubject || "Here's what you asked for!",
-      body:    matchedConfig.followUpDM,
-    }),
+    emailFound
+      ? sendEmail({
+          to:      emailFound,
+          subject: matchedConfig.emailSubject || "Here's what you asked for!",
+          body:    matchedConfig.followUpDM,
+        })
+      : Promise.resolve(null),
   ])
 
   await markProcessed(conversationId)
   L(`done — DM: ${dmResult.status}${dmResult.status==='rejected'?' ERR:'+( dmResult as any).reason?.message:''} | email: ${emailResult.status}`)
 
   return NextResponse.json({
-    ok: true, emailFound, senderName,
+    ok: true, emailFound, follower, senderName,
     dmSent:    dmResult.status === 'fulfilled',
-    emailSent: emailResult.status === 'fulfilled',
+    emailSent: Boolean(emailFound) && emailResult.status === 'fulfilled',
     dmError:   dmResult.status === 'rejected' ? (dmResult as any).reason?.message : undefined,
   })
 }

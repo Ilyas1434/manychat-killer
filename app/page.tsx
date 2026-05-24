@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 
-type PollerResult = { conversationId: string; participantName: string; emailFound: string; dmSent: boolean; emailSent?: boolean; error?: string }
+type PollerResult = { conversationId: string; participantName: string; replyFound?: string; emailFound?: string; follower?: boolean; dmSent: boolean; emailSent?: boolean; error?: string }
 type PollerStatus = { state: 'idle' | 'running' | 'done' | 'error'; sent: number; checked: number; results: PollerResult[]; lastRun?: string }
 
-function EmailPoller() {
+function FollowUpPoller() {
   const [status, setStatus] = useState<PollerStatus>({ state: 'idle', sent: 0, checked: 0, results: [] })
   const [hasConfigs, setHasConfigs] = useState(false)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -43,7 +43,7 @@ function EmailPoller() {
             status.state === 'running' ? 'bg-amber animate-pulse' :
             status.state === 'done'    ? 'bg-green' : 'bg-note'
           }`} />
-          <span className="text-sm font-semibold text-ink">Email Poller</span>
+          <span className="text-sm font-semibold text-ink">Follow-up Poller</span>
           <span className="font-mono text-xs text-note">· auto-runs every 2 min</span>
         </div>
         <button
@@ -76,8 +76,9 @@ function EmailPoller() {
               <div className="w-1.5 h-1.5 rounded-full bg-green flex-shrink-0" />
               <span className="text-ink font-medium">{r.participantName}</span>
               <span className="text-note">replied with</span>
-              <span className="font-mono text-prose text-xs">{r.emailFound}</span>
+              <span className="font-mono text-prose text-xs">{r.emailFound ?? r.replyFound ?? 'reply'}</span>
               <div className="ml-auto flex items-center gap-2">
+                {r.follower && <span className="text-green text-xs font-mono">FOLLOW ✓</span>}
                 <span className="text-green text-xs font-mono">DM ✓</span>
                 {r.emailSent && <span className="text-blue text-xs font-mono">EMAIL ✓</span>}
               </div>
@@ -158,7 +159,7 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      <EmailPoller />
+      <FollowUpPoller />
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4 mb-10">

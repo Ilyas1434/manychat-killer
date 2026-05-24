@@ -13,6 +13,7 @@ export async function POST(req: Request) {
   }
   const config: EmailCollectConfig = {
     ...body,
+    replyTrigger: body.replyTrigger ?? 'email',
     updatedAt: new Date().toISOString(),
   }
   await upsertConfig(config)

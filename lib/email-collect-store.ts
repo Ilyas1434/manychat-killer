@@ -15,6 +15,7 @@ export type EmailCollectConfig = {
   emailAskText:   string
   followUpDM:     string
   emailSubject:   string
+  replyTrigger?:  'email' | 'follow'
   updatedAt:      string
 }
 
