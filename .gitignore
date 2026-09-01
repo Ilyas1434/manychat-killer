@@ -1,9 +1,21 @@
 node_modules/
-.env
 .next/
 out/
+.vercel
+
+# Secrets
+.env
+.env*.local
+
+# Local runtime state
 data/*
 !data/email-collect.json
+
+# Private data — real contact info, never publish
+collected-emails.md
+
+# Local vendored copy of the Zernio API docs (see https://zernio.com/docs)
+zernio-api-documentation
+
 *.tsbuildinfo
-.vercel
 .DS_Store

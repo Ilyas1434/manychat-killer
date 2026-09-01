@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "list": "node scripts/list-accounts.js",
-    "create": "node scripts/create-automation.js"
+    "create": "node scripts/create-automation.js",
+    "oauth": "node scripts/oauth-setup.js"
   },
   "dependencies": {
     "@vercel/kv": "^3.0.0",

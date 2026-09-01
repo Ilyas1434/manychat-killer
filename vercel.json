@@ -1,1 +1,8 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/reel-watcher",
+      "schedule": "* * * * *"
+    }
+  ]
+}
